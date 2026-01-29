@@ -24,11 +24,20 @@ class StellariumConnector:
             print(f"Stellarium Connection Error: {e}")
             return False
 
+    def connect(self, host, port, password=None):
+        self.base_url = f"http://{host}:{port}/api"
+        if password:
+            self.auth = ("", password)
+        else:
+            self.auth = None
+        return self.get_status()
+
     def get_status(self):
         """Check if Stellarium is running."""
         try:
             # Basic GET to check connection
-            response = requests.get(f"{self.base_url}/main/status", timeout=2, auth=self.auth)
+            # Short timeout (0.2s) to prevent UI lag during scanning
+            response = requests.get(f"{self.base_url}/main/status", timeout=0.2, auth=self.auth)
             return response.ok and response.status_code == 200
         except:
             return False
@@ -78,3 +87,36 @@ class StellariumConnector:
         """Emergency Stop: Stop scripts and movement."""
         self._post("scripts/stop")
         self._post("main/focus", {"target": ""}) 
+
+    # --- EXTENDED CAPABILITIES for VECTOR INFINITY ---
+
+    def get_object_info(self, name):
+        """
+        Fetch real-time info (Alt, Az, Mag) for an object.
+        Returns Dictionary or None.
+        """
+        try:
+            url = f"{self.base_url}/objects/info"
+            response = requests.get(url, params={"name": name, "format": "json"}, auth=self.auth, timeout=0.2)
+            if response.ok:
+                data = response.json()
+                # Stellarium returns data structure with 'altitude', 'magnitude', etc.
+                # Note: Keys might vary depending on Stellarium version.
+                return data
+            return None
+        except:
+            return None
+
+    def get_telemetry(self):
+        """
+        Get current View status (FOV, RA/Dec of center).
+        """
+        try:
+            url = f"{self.base_url}/main/status"
+            response = requests.get(url, auth=self.auth, timeout=0.2)
+            if response.ok:
+                return response.json() # Returns full status dict
+            return None
+        except:
+            print("Telemetry Error")
+            return None

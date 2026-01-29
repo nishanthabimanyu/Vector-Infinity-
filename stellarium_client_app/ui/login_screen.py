@@ -2,8 +2,8 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                                QLabel, QLineEdit, QFrame, QGraphicsDropShadowEffect, 
                                QTextBrowser, QGridLayout, QSizePolicy)
-from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve, QThread
-from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient
+from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve, QThread, QUrl
+from PySide6.QtGui import QColor, QFont, QPalette, QLinearGradient, QDesktopServices
 from logic.rss_service import RSSWorker
 
 class ProHeader(QLabel):
@@ -314,25 +314,30 @@ class LoginScreen(QWidget):
         self.sidebar = QWidget()
         self.sidebar.setFixedWidth(320)
         self.sidebar.setStyleSheet("""
-            QWidget { background-color: #181818; border-right: 1px solid #2A2A2A; }
+            QWidget { background-color: #0a0a0a; border-right: 1px solid #1a1a1a; }
             QLabel { 
-                color: #777; 
+                color: #888; 
                 font-family: 'Segoe UI'; 
                 font-size: 11px; 
-                font-weight: 800; 
+                font-weight: 700; 
                 text-transform: uppercase; 
                 letter-spacing: 0.5px;
+                margin-top: 10px;
             }
             QLineEdit {
-                background-color: #222;
+                background-color: #111;
                 border: 1px solid #333;
-                color: #FFF;
-                padding: 10px;
+                color: #eee;
+                padding: 12px;
                 font-family: 'Consolas';
                 font-size: 14px;
-                border-radius: 2px;
+                border-radius: 4px;
+                selection-background-color: #0078d4;
             }
-            QLineEdit:focus { border: 1px solid #00A4EF; background-color:#282828;}
+            QLineEdit:focus { 
+                border: 1px solid #0078d4; 
+                background-color: #1a1a1a;
+            }
             QPushButton {
                 background-color: #252525;
                 color: #DDD;
@@ -344,14 +349,17 @@ class LoginScreen(QWidget):
                 text-transform: uppercase;
                 border-radius: 2px;
             }
-            QPushButton:hover { background-color: #303030; border-color: #666; color:#FFF; }
             QPushButton#Primary {
-                background-color: #0078D4; 
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0078d4, stop:1 #005a9e); 
                 color: white;
-                border: none;
+                border: 1px solid #005a9e;
                 font-weight: 700;
+                letter-spacing: 1px;
             }
-            QPushButton#Primary:hover { background-color: #1084E0; }
+            QPushButton#Primary:hover { 
+                background-color: #006cbd; 
+                border-color: #0078d4;
+            }
         """)
         
         side_layout = QVBoxLayout(self.sidebar)
@@ -377,15 +385,39 @@ class LoginScreen(QWidget):
         
         side_layout.addSpacing(15)
         
-        self.btn_connect = QPushButton("Connect to Core")
+        self.btn_connect = QPushButton("Retry Connection")
         self.btn_connect.setObjectName("Primary")
         self.btn_connect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_connect.clicked.connect(self.attempt_connection)
         side_layout.addWidget(self.btn_connect)
         
-        self.lbl_status = QLabel("STATUS: OFFLINE")
-        self.lbl_status.setStyleSheet("color: #666; font-size: 11px; margin-top: 10px; font-weight:700;")
+        self.lbl_status = QLabel("STATUS: DISCONNECTED")
+        self.lbl_status.setStyleSheet("color: #FF4444; font-size: 10px; margin-top: 10px; font-weight:700;")
         side_layout.addWidget(self.lbl_status)
+        
+        # --- Social Login ---
+        lbl_or = QLabel("- OR -")
+        lbl_or.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_or.setStyleSheet("color: #444; margin: 15px 0 5px 0; font-size: 10px; font-weight: bold;")
+        side_layout.addWidget(lbl_or)
+
+        self.btn_discord = QPushButton("Sign Up with Discord")
+        self.btn_discord.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_discord.setStyleSheet("""
+            QPushButton {
+                background-color: #5865F2; 
+                color: white; 
+                border: none;
+                font-family: 'Segoe UI';
+                font-weight: 700;
+                font-size: 12px;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #4752C4; }
+        """)
+        self.btn_discord.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.com/login")))
+        side_layout.addWidget(self.btn_discord)
         
         side_layout.addStretch()
         
@@ -442,56 +474,58 @@ class LoginScreen(QWidget):
         self._typing_timer.timeout.connect(self._typing_tick)
         self._typing_timer.start(50)
 
-        # AUTO-CONNECT: Attempt to connect to Stellarium automatically on boot
-        QTimer.singleShot(1500, self.attempt_connection)
+        # AUTO-CONNECT SCANNER
+        self.scan_attempt = 0
+        self.max_retries = 10
+        self.scan_timer = QTimer(self)
+        self.scan_timer.timeout.connect(self._auto_scan_tick)
+        self.scan_timer.start(2000) # Check every 2 seconds
+        
+        self.lbl_status.setText("STATUS: INITIALIZING SCANNER...")
+        self.lbl_status.setStyleSheet("color: #FFD700; font-weight: bold; margin-top:10px;")
+
+    def _auto_scan_tick(self):
+        self.scan_attempt += 1
+        self.lbl_status.setText(f"STATUS: SCANNING FOR CORE... ({self.scan_attempt}/{self.max_retries})")
+        
+        # Try to connect
+        host = self.input_host.text()
+        port = self.input_port.text()
+        pwd = self.input_pass.text()
+        
+        if self.connector.connect(host, port, pwd):
+            self.scan_timer.stop()
+            self.lbl_status.setText("STATUS: UPLINK ESTABLISHED")
+            self.lbl_status.setStyleSheet("color: #00FF00; font-weight: bold; margin-top:10px;")
+            QTimer.singleShot(500, self.connection_success.emit)
+        else:
+            if self.scan_attempt >= self.max_retries:
+                self.scan_timer.stop()
+                self.lbl_status.setText("STATUS: SCAN FAILED. MANUAL INPUT REQUIRED.")
+                self.lbl_status.setStyleSheet("color: #FF4444; font-weight: bold; margin-top:10px;")
+
+    def attempt_connection(self):
+        # Manual Override
+        self.scan_timer.stop()
+        host = self.input_host.text()
+        port = self.input_port.text()
+        pwd = self.input_pwd.text()
+        
+        self.lbl_status.setText("STATUS: INITIATING MANUAL HANDSHAKE...")
+        self.lbl_status.setStyleSheet("color: #00A4EF; font-weight: bold; margin-top:10px;")
+        
+        if self.connector.connect(host, port, pwd):
+            self.lbl_status.setText("STATUS: UPLINK ESTABLISHED")
+            self.lbl_status.setStyleSheet("color: #00FF00; font-weight: bold; margin-top:10px;")
+            QTimer.singleShot(500, self.connection_success.emit)
+        else:
+            self.lbl_status.setText("STATUS: CONNECTION FAILED")
+            self.lbl_status.setStyleSheet("color: #FF4444; font-weight: bold; margin-top:10px;")
 
     def _typing_tick(self):
         if self._typing_index < len(self._target_text):
             self._typing_index += 1
             self.lbl_sub.setText(self._target_text[:self._typing_index] + "_")
         else:
-            self._typing_timer.stop()
             self.lbl_sub.setText(self._target_text)
-
-    def attempt_connection(self):
-        self.lbl_status.setText("STATUS: NEGOTIATING HANDSHAKE...")
-        self.lbl_status.setStyleSheet("color: #FFD700;") 
-        self.input_host.setEnabled(False)
-        self.input_port.setEnabled(False)
-        self.input_pass.setEnabled(False)
-        self.btn_connect.setEnabled(False)
-        
-        QTimer.singleShot(800, self._perform_connect)
-        
-    def _perform_connect(self):
-        host = self.input_host.text()
-        port = self.input_port.text()
-        password = self.input_pass.text()
-        
-        # Update Connector
-        self.connector.base_url = f"http://{host}:{port}/api"
-        if password:
-            self.connector.auth = ("", password)
-        else:
-            self.connector.auth = None
-        
-        if self.connector.get_status():
-            self.lbl_status.setText("STATUS: CONNECTED")
-            self.lbl_status.setStyleSheet("color: #00FF00;") 
-            
-            # Transition
-            self.news_widget.hide()
-            self.sources_widget.hide()
-            self.lbl_title.setText("SYSTEM ONLINE")
-            self.lbl_sub.setText("Modules Loaded.")
-            
-            QTimer.singleShot(600, self.connection_success.emit)
-        else:
-            self.lbl_status.setText("STATUS: CONNECTION FAILED")
-            self.lbl_status.setStyleSheet("color: #FF4444;")
-            # Re-enable
-            self.input_host.setEnabled(True)
-            self.input_port.setEnabled(True)
-            self.input_pass.setEnabled(True)
-            self.btn_connect.setEnabled(True)
-            self.btn_connect.setText("Retry Connection")
+            self._typing_timer.stop()
