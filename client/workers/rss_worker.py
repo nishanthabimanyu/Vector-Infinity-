@@ -11,9 +11,11 @@ class RSSWorker(QThread):
     feed_ready = Signal(list)
 
     FEED_SOURCES = {
-        'SPACE.COM': 'https://www.space.com/feeds/all',
-        'NASA': 'https://www.nasa.gov/rss/dyn/breaking_news.rss',
-        'ARXIV': 'http://export.arxiv.org/api/query?search_query=cat:astro-ph&start=0&max_results=5&sortBy=submittedDate&sortOrder=descending'
+        # NEW: High-Res Image Feeds
+        'NASA IOTD': 'https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss',
+        'ESA SCIENCE': 'https://www.esa.int/rssfeed/Our_Activities/Space_Science', # Stable Feed
+        'HUBBLE': 'https://hubblesite.org/rss/news',
+        'SPACE.COM': 'https://www.space.com/feeds/all'
     }
 
     def run(self):
@@ -48,10 +50,53 @@ class RSSWorker(QThread):
         self.requestInterruption()
         self.wait()
 
-    def fetch_local_weather(self):
-        # Coimbatore Coordinates
-        LAT, LON = 11.0168, 76.9558
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true"
+    def fetch_location(self):
+        try:
+            # IP-based Geolocation (ipinfo.io is often more precise than ip-api)
+            # Fallback to ip-api if fails
+            data = {}
+            try:
+                resp = requests.get('https://ipinfo.io/json', timeout=3)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    loc = d.get('loc', '0,0').split(',')
+                    data = {
+                        'city': d.get('city', 'Unknown'),
+                        'region': d.get('region', ''),
+                        'lat': float(loc[0]),
+                        'lon': float(loc[1]),
+                        'country': d.get('country', '')
+                    }
+            except:
+                # Fallback
+                resp = requests.get('http://ip-api.com/json/', timeout=3)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    data = {
+                        'city': d.get('city', 'Unknown'),
+                        'region': d.get('regionName', ''),
+                        'lat': d.get('lat', 0.0),
+                        'lon': d.get('lon', 0.0),
+                        'country': d.get('country', '')
+                    }
+
+            if data:
+                return {
+                    'type': 'LOCATION',
+                    'city': data.get('city', 'Unknown'),
+                    'region': data.get('region', ''),
+                    'country': data.get('country', ''),
+                    'lat': data.get('lat', 11.0168),
+                    'lon': data.get('lon', 76.9558),
+                    'timestamp': datetime.now().timestamp()
+                }
+        except:
+            pass
+        return None
+
+    def fetch_local_weather(self, lat=11.0168, lon=76.9558):
+        # Default to Coimbatore if no geo data yet
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
         
         try:
             resp = requests.get(url, timeout=5)
@@ -72,34 +117,111 @@ class RSSWorker(QThread):
     def fetch_all_data(self):
         aggregated_items = []
         
-        # 1. RSS Feeds (Parallel)
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(self.parse_feed, source, url): source for source, url in self.FEED_SOURCES.items()}
+        # 1. Pre-Fetch Location (Fast) to determine Weather Coords
+        loc_data = self.fetch_location()
+        if loc_data: aggregated_items.append(loc_data)
+        
+        lat, lon = (loc_data['lat'], loc_data['lon']) if loc_data else (11.0168, 76.9558)
+
+        # 2. Parallel Execution for remaining sources
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            # RSS Feeds
+            futures = {executor.submit(self.parse_feed, source, url): f"RSS-{source}" for source, url in self.FEED_SOURCES.items()}
+            
+            # API Feeds (Weather uses dynamic coords)
+            futures[executor.submit(self.fetch_local_weather, lat, lon)] = "WEATHER"
+            futures[executor.submit(self.fetch_noaa_data)] = "NOAA"
+            futures[executor.submit(self.fetch_launch_data)] = "LAUNCH"
+            futures[executor.submit(self.fetch_quake_data)] = "QUAKE"
+            futures[executor.submit(self.fetch_iss_data)] = "ISS"
+            
             for future in futures:
                 try:
-                    aggregated_items.extend(future.result())
+                    res = future.result()
+                    if res:
+                        if isinstance(res, list): # RSS returns list
+                            aggregated_items.extend(res)
+                        else: # APIs return dict
+                            aggregated_items.append(res)
                 except Exception as e:
-                    print(f"Feed Error ({futures[future]}): {e}")
+                    print(f"Data Fetch Error ({futures[future]}): {e}")
 
         aggregated_items.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-        
-        # 2. Add Local Weather
-        weather = self.fetch_local_weather()
-        if weather: aggregated_items.append(weather)
-        
-        # 3. Special Data (NOAA & Launch) - Serial (fast APIs)
-        try:
-            solar_data = self.fetch_noaa_data()
-            if solar_data: aggregated_items.append(solar_data)
-        except Exception as e:
-            print(f"NOAA Error: {e}")
+        return aggregated_items
 
+    def fetch_quake_data(self):
+        # USGS Feed: 2.5+ Magnitude Earthquakes, Past Day
+        url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
         try:
-            launch_data = self.fetch_launch_data()
-            if launch_data: aggregated_items.append(launch_data)
-        except Exception as e:
-            print(f"Launch Error: {e}")
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('features'):
+                    # Get the most recent significant quake
+                    quake = data['features'][0]['properties']
+                    return {
+                        'type': 'SEISMIC',
+                        'mag': quake['mag'],
+                        'place': quake['place'],
+                        'time': quake['time'],
+                        'timestamp': quake['time'] / 1000 # Convert ms to s
+                    }
+        except:
+            pass
+        return None
 
+    def fetch_iss_data(self):
+        # 1. ORBITAL PHYSICS (Celestrak - Cached if possible, but we fetch live for now)
+        # We want Inclination and Period (derived from Mean Motion)
+        orbit_data = {}
+        try:
+            url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=JSON"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    sat = data[0]
+                    # Calc Period: 1440 mins / Mean Motion (revs/day)
+                    mm = sat.get('MEAN_MOTION', 15.48)
+                    period = 1440.0 / mm
+                    orbit_data = {
+                        'inclination': sat.get('INCLINATION', 0),
+                        'period': period,
+                        'name': sat.get('OBJECT_NAME', 'ISS')
+                    }
+        except:
+            pass
+            
+        # 2. REAL-TIME POSITION (Open-Notify)
+        # Because we lack SGP4 to propagate Celestrak TLE
+        pos_data = {}
+        try:
+            url = "http://api.open-notify.org/iss-now.json"
+            resp = requests.get(url, timeout=3)
+            if resp.status_code == 200:
+                data = resp.json()
+                if 'iss_position' in data:
+                    pos = data['iss_position']
+                    pos_data = {
+                        'lat': float(pos['latitude']),
+                        'lon': float(pos['longitude'])
+                    }
+        except:
+            pass
+            
+        if orbit_data or pos_data:
+            return {
+                'type': 'SATELLITE',
+                'name': orbit_data.get('name', 'ISS (ZARYA)'),
+                'inclination': orbit_data.get('inclination', 51.6),
+                'period': orbit_data.get('period', 92.9),
+                'lat': pos_data.get('lat', 0.0),
+                'lon': pos_data.get('lon', 0.0),
+                'timestamp': datetime.now().timestamp()
+            }
+        return None
+
+        aggregated_items.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
         return aggregated_items
 
     def fetch_noaa_data(self):
@@ -150,8 +272,19 @@ class RSSWorker(QThread):
     def parse_feed(self, source, url):
         items = []
         try:
-            feed = feedparser.parse(url)
-            if feed.bozo and not feed.entries: pass
+            # Bypass potential User-Agent blocking (ESA/Hubble)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                print(f"Feed Error {source}: Status {resp.status_code}")
+                return []
+                
+            feed = feedparser.parse(resp.content)
+            if not feed.entries: 
+                print(f"Feed Empty {source}")
+                pass
 
             for entry in feed.entries[:5]:
                 title = entry.get('title', 'No Title')
@@ -168,14 +301,24 @@ class RSSWorker(QThread):
                     pub_date_str = datetime.fromtimestamp(timestamp).strftime("%a, %d %b %H:%M")
                 
                 image_url = ""
-                if 'media_content' in entry: image_url = entry.media_content[0]['url']
-                elif 'media_thumbnail' in entry: image_url = entry.media_thumbnail[0]['url']
                 
-                if not image_url and 'enclosures' in entry:
+                # PRIORITY 1: Media Content (Standard)
+                if 'media_content' in entry: 
+                    image_url = entry.media_content[0]['url']
+                
+                # PRIORITY 2: Enclosures (Podcasts/NASA)
+                elif 'enclosures' in entry:
                      for enc in entry.enclosures:
                          if enc.type.startswith('image/'):
                              image_url = enc.href
                              break
+                
+                # PRIORITY 3: 'links' tag (New NASA Format)
+                if not image_url and 'links' in entry:
+                    for link in entry.links:
+                        if link.get('rel') == 'enclosure' and link.get('type', '').startswith('image/'):
+                            image_url = link.get('href')
+                            break
                 
                 title = html.unescape(title)
                 

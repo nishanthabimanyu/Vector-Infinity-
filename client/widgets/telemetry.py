@@ -1,4 +1,5 @@
 import psutil
+from client.widgets.visual_widgets import MoonPhaseVisualizer
 from datetime import datetime
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                QProgressBar)
@@ -12,7 +13,7 @@ class SystemMonitor(QWidget):
         layout.setSpacing(10)
 
         # Header
-        layout.addWidget(self.create_header("NEURAL LINK"))
+        layout.addWidget(self.create_header("SYSTEM DIAGNOSTICS"))
 
         # CPU Monitor
         self.cpu_bar = self.create_bar("CPU LOAD")
@@ -105,9 +106,17 @@ class LunarModule(QWidget):
 
         layout.addWidget(self.create_header("LUNAR CYCLE"))
 
+        # [NEW] Visualizer
+        self.visualizer = MoonPhaseVisualizer()
+        layout.addWidget(self.visualizer)
+
         # Phase Name
-        self.phase_lbl = QLabel(self.calculate_phase())
+        phase_name = self.calculate_phase()
+        self.phase_lbl = QLabel(phase_name)
         self.phase_lbl.setStyleSheet("color: #fff; font-size: 14px; font-weight: bold; letter-spacing: 0.5px;")
+        
+        # Initial Set
+        self.visualizer.set_phase(phase_name)
         
         # Status
         self.status_lbl = QLabel("VISIBILITY: OPTIMAL")
