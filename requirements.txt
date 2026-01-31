@@ -1,0 +1,7 @@
+PySide6
+black
+flake8
+pytest
+pytest-qt
+qtawesome
+qdarktheme
