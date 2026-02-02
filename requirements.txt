@@ -5,3 +5,6 @@ pytest
 pytest-qt
 qtawesome
 qdarktheme
+matplotlib
+pandas
+requests

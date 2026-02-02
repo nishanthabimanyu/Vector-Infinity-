@@ -8,7 +8,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Vector Infinity")
-        self.resize(1200, 800) # Set a larger default size
+        self.resize(1600, 900) # Set a larger default size
 
         # Set LogicGate as the central widget
         self.logic_gate = LogicGate()

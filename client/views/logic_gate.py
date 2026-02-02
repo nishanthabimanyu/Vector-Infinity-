@@ -1,12 +1,15 @@
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, 
                                QLineEdit, QPushButton, QFrame, QSpacerItem, 
-                               QSizePolicy, QScrollArea, QStackedWidget, QProgressBar, QGridLayout, QGraphicsDropShadowEffect)
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QTimer, QRunnable, QThreadPool, QObject, QEvent
+                               QSizePolicy, QScrollArea, QStackedWidget, QProgressBar, QGridLayout, QGraphicsDropShadowEffect, QComboBox)
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QTimer, QRunnable, QThreadPool, QObject, QPropertyAnimation, QEasingCurve, QEvent
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QDesktopServices, QImage, QCursor
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineCore import QWebEnginePage
 from client.workers.rss_worker import RSSWorker, requests # Reuse requests from worker
+from client.workers.stellarium_worker import StellariumWorker
+from client.views.lab_dashboard import LabDashboard
 from datetime import datetime
 from client.widgets.telemetry import SystemMonitor, LunarModule
 import io
@@ -111,6 +114,17 @@ class LogicGate(QWidget):
         if hasattr(self, 'rss_worker'):
             self.rss_worker.shutdown()
 
+    def eventFilter(self, obj, event):
+        # Click Outside Sidebar Logic
+        if obj == self.stage_stack and event.type() == QEvent.MouseButtonPress:
+            # If sidebar is OPEN (Visible) and we click the stage -> Close it
+            if self.sidebar.width() > 0:
+                self.set_immersive_mode(True) # Hide Sidebar
+                return True # Consume event? Maybe not, allow interaction with stage?
+                # "tapping anywhere on the screen closes this panel" -> implies dismissal is priority.
+        
+        return super().eventFilter(obj, event)
+
     def __init__(self):
         super().__init__()
         
@@ -158,33 +172,154 @@ class LogicGate(QWidget):
         # Connection
         layout.addWidget(self.create_sidebar_header("| CONNECTION CONFIGURATION"))
 
-        layout.addWidget(self.create_label("HOST ADDRESS"))
-        self.input_host = QLineEdit("127.0.0.1")
-        layout.addWidget(self.input_host)
+        # Sidebar Stack (Config vs Mission)
+        self.sidebar_stack = QStackedWidget()
+        layout.addWidget(self.sidebar_stack)
+        
+        # Page 1: Configuration
+        self.page_config = QWidget()
+        p1_layout = QVBoxLayout(self.page_config)
+        p1_layout.setContentsMargins(0,0,0,0)
+        p1_layout.setSpacing(15)
+        
+        # Connection Inputs (Fixed Layout)
+        p1_layout.addWidget(self.create_label("HOST ADDRESS"))
+        self.input_host = QComboBox()
+        self.input_host.setEditable(True)
+        self.input_host.addItems(["127.0.0.1", "localhost", "192.168.1.X"])
+        self.input_host.setStyleSheet("""
+            QComboBox {
+                background-color: #161b22; color: #e0e0e0; 
+                border: 1px solid #30363d; border-radius: 4px; padding: 8px 10px;
+                font-family: 'JetBrains Mono'; font-size: 12px;
+            }
+            QComboBox:hover { border: 1px solid #4facfe; }
+            QComboBox:focus { border: 1px solid #4facfe; background-color: #1c2128; }
+            QComboBox::drop-down {
+                subcontrol-origin: padding; subcontrol-position: top right; width: 30px;
+                border-left: 1px solid #30363d; background: #21262d;
+            }
+            QComboBox::down-arrow { image: none; border-top: 5px solid #8b949e; border-left: 5px solid transparent; border-right: 5px solid transparent; width: 0; height: 0; margin: 2px; }
+            QComboBox QAbstractItemView { background-color: #161b22; color: #c9d1d9; border: 1px solid #30363d; }
+        """)
+        p1_layout.addWidget(self.input_host)
 
-        layout.addWidget(self.create_label("PORT"))
+        p1_layout.addWidget(self.create_label("PORT"))
         self.input_port = QLineEdit("8090")
-        layout.addWidget(self.input_port)
+        p1_layout.addWidget(self.input_port)
 
-        layout.addWidget(self.create_label("ACCESS KEY (OPTIONAL)"))
+        p1_layout.addWidget(self.create_label("ACCESS KEY (OPTIONAL)"))
         self.input_key = QLineEdit()
         self.input_key.setPlaceholderText("••••••••••••")
         self.input_key.setEchoMode(QLineEdit.Password)
-        layout.addWidget(self.input_key)
+        p1_layout.addWidget(self.input_key)
 
-        layout.addSpacing(10)
-
-        self.btn_connect = QPushButton("  INITIALIZE CONNECTION")
-        self.btn_connect.setObjectName("btn_primary")
+        p1_layout.addSpacing(10)
+        
+        self.btn_connect = QPushButton("INITIALIZE CONNECTION")
         self.btn_connect.setCursor(Qt.PointingHandCursor)
-        self.btn_connect.clicked.connect(self.request_dashboard.emit)
-        layout.addWidget(self.btn_connect)
+        self.btn_connect.clicked.connect(self.init_stellarium_connection)
+        self.btn_connect.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #007bff, stop:1 #00d4ff);
+                color: white; font-weight: bold; font-family: 'Rajdhani', sans-serif;
+                font-size: 14px; padding: 12px; border: none; border-radius: 4px; letter-spacing: 1px;
+            }
+            QPushButton:hover { background: #0056b3; }
+        """)
+        p1_layout.addWidget(self.btn_connect)
+        
+        # DEV BUTTON
+        p1_layout.addSpacing(10)
+        btn_dev = QPushButton("DEV: OFFLINE LAB")
+        btn_dev.setCursor(Qt.PointingHandCursor)
+        def enter_dev_mode():
+            self.stage_stack.setCurrentIndex(2)
+            self.set_immersive_mode(True)
+            
+        btn_dev.clicked.connect(enter_dev_mode)
+        btn_dev.setStyleSheet("""
+            QPushButton {
+                background: #238636; color: white; border-radius: 4px; padding: 5px; font-weight: bold;
+            }
+            QPushButton:hover { background: #2ea043; }
+        """)
+        p1_layout.addWidget(btn_dev)
+        
+        # Page 2: Mission Control
+        self.page_mission = QWidget()
+        p2_layout = QVBoxLayout(self.page_mission)
+        p2_layout.setContentsMargins(0,0,0,0)
+        p2_layout.setSpacing(15)
+        
+        lbl_mission = QLabel("UPLINK ESTABLISHED")
+        lbl_mission.setStyleSheet("color: #2ecc71; font-weight: bold; letter-spacing: 2px; font-size: 14px; border-bottom: 2px solid #2ecc71; padding-bottom: 5px;")
+        lbl_mission.setAlignment(Qt.AlignCenter)
+        p2_layout.addWidget(lbl_mission)
+        
+        # Telemetry Grid
+        self.lbl_fps = QLabel("FPS: --")
+        self.lbl_fov = QLabel("FOV: --")
+        self.lbl_time = QLabel("T: --:--:--")
+        for l in [self.lbl_fps, self.lbl_fov, self.lbl_time]:
+            l.setStyleSheet("color: #4facfe; font-family: 'JetBrains Mono'; font-size: 11px;")
+            p2_layout.addWidget(l)
+            
+        p2_layout.addSpacing(10)
+        
+        btn_lab = QPushButton("OPEN RESEARCH LAB")
+        btn_lab.setCursor(Qt.PointingHandCursor)
+        btn_lab.setStyleSheet("""
+            QPushButton {
+                background: rgba(31, 111, 235, 0.2); border: 1px solid #1f6feb;
+                color: #58a6ff; font-weight: bold; padding: 10px;
+            }
+            QPushButton:hover { background: rgba(31, 111, 235, 0.4); }
+        """)
+        btn_lab.clicked.connect(lambda: self.stage_stack.setCurrentIndex(2)) # Lab Index
+        p2_layout.addWidget(btn_lab)
 
-        # Status
-        self.lbl_status = QLabel("●  STATUS: DISCONNECTED")
-        self.lbl_status.setObjectName("status_offline")
-        self.lbl_status.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.lbl_status)
+        btn_dash = QPushButton("DASHBOARD VIEW")
+        btn_dash.setCursor(Qt.PointingHandCursor)
+        btn_dash.setStyleSheet("background: transparent; color: #8b949e; text-decoration: underline;")
+        btn_dash.clicked.connect(lambda: self.stage_stack.setCurrentIndex(0)) # Home Index
+        p2_layout.addWidget(btn_dash)
+
+        p2_layout.addStretch()
+        
+        btn_term = QPushButton("TERMINATE UPLINK")
+        btn_term.setCursor(Qt.PointingHandCursor)
+        btn_term.clicked.connect(self.stop_stellarium_connection)
+        btn_term.setStyleSheet("""
+            QPushButton {
+                background: #c0392b; color: white; font-weight: bold; border-radius: 4px; padding: 10px;
+            }
+            QPushButton:hover { background: #e74c3c; }
+        """)
+        p2_layout.addWidget(btn_term)
+        
+        self.sidebar_stack.addWidget(self.page_config)
+        self.sidebar_stack.addWidget(self.page_mission)
+
+        # Auth
+        # layout.addWidget(self.create_sidebar_header("| AUTHENTICATION")) # Keep this below stack
+
+        # Status Light
+        status_layout = QHBoxLayout()
+        status_layout.setAlignment(Qt.AlignCenter)
+        
+        self.status_led = QLabel("●")
+        self.status_led.setStyleSheet("color: #e74c3c; font-size: 10px; margin-right: 5px;")
+        
+        self.status_text = QLabel("STATUS: DISCONNECTED")
+        self.status_text.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        
+        status_layout.addWidget(self.status_led)
+        status_layout.addWidget(self.status_text)
+        
+        status_container = QWidget()
+        status_container.setLayout(status_layout)
+        layout.addWidget(status_container)
 
         spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
         layout.addItem(spacer)
@@ -224,7 +359,35 @@ class LogicGate(QWidget):
         self.setup_reader(self.reader_page)
         self.stage_stack.addWidget(self.reader_page)
 
+        # Page 2: Research Lab
+        self.lab_dashboard = LabDashboard()
+        self.lab_dashboard.request_sidebar.connect(self.toggle_immersive_mode)
+        self.stage_stack.addWidget(self.lab_dashboard)
+
         self.main_layout.addWidget(self.stage_stack)
+
+        # OVERLAY TOGGLE BUTTON (Floating >)
+        self.btn_toggle_overlay = QPushButton(">", self.stage_stack)
+        self.btn_toggle_overlay.setFixedSize(30, 60)
+        self.btn_toggle_overlay.move(0, 300) # Vertically centered-ish
+        self.btn_toggle_overlay.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_overlay.clicked.connect(self.toggle_immersive_mode)
+        self.btn_toggle_overlay.setStyleSheet("""
+            QPushButton {
+                background: #0e1116; color: #4facfe; font-weight: bold; font-size: 16px;
+                border: 1px solid #1f232a; border-left: none; 
+                border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+            }
+            QPushButton:hover { background: #1f232a; }
+        """)
+        # Adjust position dynamically if needed, but fixed for now.
+        
+        # Click Outside Filter
+        self.stage_stack.installEventFilter(self)
+        
+        # KEY FIX: Ensure button stays on top when page changes
+        self.stage_stack.currentChanged.connect(lambda: self.btn_toggle_overlay.raise_())
+        self.btn_toggle_overlay.raise_()
 
     def setup_dashboard(self, parent_widget):
         # Master Layout (Horizontal split inside Dashboard Page)
@@ -912,9 +1075,9 @@ class LogicGate(QWidget):
         title.setStyleSheet("""
             color: white; 
             font-family: 'JetBrains Mono', 'Segoe UI', sans-serif; 
-            font-size: 28px; 
+            font-size: 24px; 
             font-weight: bold; 
-            line-height: 1.1;
+            line-height: normal;
         """)
 
         # Summary
@@ -969,7 +1132,6 @@ class LogicGate(QWidget):
                     border-radius: 8px;
                     background-image: linear-gradient(#1a1a1a 1px, transparent 1px),
                                       linear-gradient(90deg, #1a1a1a 1px, transparent 1px);
-                    background-size: 20px 20px;
                 }
             """)
 
@@ -1129,10 +1291,140 @@ class LogicGate(QWidget):
                 label.setPixmap(scaled)
         except RuntimeError:
             pass # Widget deleted
-        except Exception as e:
-            print(f"Image Render Error: {e}")
+
+    # --- STELLARIUM HANDLERS ---
+    def toggle_connection(self):
+        if hasattr(self, 'stellarium_worker') and self.stellarium_worker.isRunning():
+            self.stop_stellarium_connection()
+        else:
+            self.init_stellarium_connection()
+
+    def stop_stellarium_connection(self):
+        if hasattr(self, 'stellarium_worker'):
+            self.stellarium_worker.shutdown()
+            self.stellarium_worker.deleteLater()
+            
+        self.status_led.setStyleSheet("color: #e74c3c; font-size: 10px; margin-right: 5px;")
+        self.status_text.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        self.status_text.setText("STATUS: DISCONNECTED")
+        
+        self.sidebar_stack.setCurrentIndex(0)
+        self.btn_connect.setText("INITIALIZE CONNECTION")
+        self.btn_connect.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #007bff, stop:1 #00d4ff);
+                color: white; font-weight: bold; font-family: 'Rajdhani', sans-serif;
+                font-size: 14px; padding: 12px; border: none; border-radius: 4px; letter-spacing: 1px;
+            }
+            QPushButton:hover { background: #0056b3; }
+        """)
+
+    def init_stellarium_connection(self):
+        # 1. Update UI to "Connecting..."
+        self.status_led.setStyleSheet("color: #f39c12; font-size: 10px; margin-right: 5px;") 
+        self.status_text.setStyleSheet("color: #f39c12; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+        self.status_text.setText("STATUS: ESTABLISHING LINK...")
+        self.btn_connect.setEnabled(False) 
+        
+        # 2. Get Host
+        host = self.input_host.currentText()
+        port = int(self.input_port.text())
+        
+        # 3. Start Worker
+        self.stellarium_worker = StellariumWorker(host=host, port=port)
+        self.stellarium_worker.connection_status.connect(self.on_stellarium_status)
+        self.stellarium_worker.latency_updated.connect(self.on_latency_update)
+        self.stellarium_worker.start()
+
+    def on_stellarium_status(self, connected, message):
+        self.btn_connect.setEnabled(True) 
+        if connected:
+            self.status_led.setStyleSheet("color: #2ecc71; font-size: 10px; margin-right: 5px;") 
+            self.status_text.setStyleSheet("color: #2ecc71; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+            self.status_text.setText(f"STATUS: {message}")
+            
+            # Switch to Mission Control Sidebar
+            self.sidebar_stack.setCurrentIndex(1) 
+            
+            # [USER REQUEST] Hide Sidebar completely for "Fullscreen" feel
+            # We keep Mission Control logic in background if we ever want to "peek" at it, 
+            # but for now we hide the sidebar.
+            self.set_immersive_mode(True)
+            
+        else:
+            self.status_led.setStyleSheet("color: #e74c3c; font-size: 10px; margin-right: 5px;") 
+            self.status_text.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
+            self.status_text.setText(f"STATUS: {message}")
+            
+            # Revert
+            self.sidebar_stack.setCurrentIndex(0)
+            self.set_immersive_mode(False)
+
+    def on_latency_update(self, latency_ms):
+        # Update connection label with live ping
+        # If latency is normal
+        color = "#2ecc71"
+        if latency_ms > 100: color = "#f39c12"
+        if latency_ms > 300: color = "#e74c3c"
+        
+        self.status_text.setText(f"STATUS: CONNECTED | PING: {int(latency_ms)}ms")
+        self.status_text.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
 
     # --- HELPER FUNCTIONS ---
+    def toggle_immersive_mode(self):
+        # Use explicit state tracking if available, fall back to width
+        if not hasattr(self, 'sidebar_collapsed'):
+            self.sidebar_collapsed = False
+            
+        # If Collapsed (True) -> We want to Open (set_immersive(False))
+        # If Expanded (False) -> We want to Close (set_immersive(True))
+        target_immersive = not self.sidebar_collapsed
+        self.set_immersive_mode(target_immersive)
+
+    def set_immersive_mode(self, active: bool):
+        """Smoothly toggles sidebar visibility using QPropertyAnimation."""
+        self.sidebar_collapsed = active
+        """Smoothly toggles sidebar visibility using QPropertyAnimation."""
+        current_width = self.sidebar.width()
+        
+        if active: # CLOSING (Hide)
+             # Force compression: Min=0, Animate Max->0
+             self.sidebar.setMinimumWidth(0)
+             prop = b"maximumWidth"
+             start_val = current_width
+             end_val = 0
+             
+        else: # OPENING (Reveal)
+             # Force expansion: Max=350, Animate Min->350
+             self.sidebar.setVisible(True)
+             self.sidebar.setMaximumWidth(350) 
+             prop = b"minimumWidth"
+             start_val = current_width
+             end_val = 350
+
+        # Animate
+        self.sidebar_anim = QPropertyAnimation(self.sidebar, prop)
+        self.sidebar_anim.setDuration(500)
+        self.sidebar_anim.setStartValue(start_val)
+        self.sidebar_anim.setEndValue(end_val)
+        self.sidebar_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        
+        # Sync the 'Other' property at the end to lock FixedWidth
+        def on_finished():
+            if not active: # Opened
+                self.sidebar.setMinimumWidth(350)
+                self.sidebar.setMaximumWidth(350)
+            else: # Closed
+                self.sidebar.setMinimumWidth(0)
+                self.sidebar.setMaximumWidth(0)
+                
+        self.sidebar_anim.finished.connect(on_finished)
+        self.sidebar_anim.start()
+        
+        # Update Overlay Button Text
+        if hasattr(self, 'btn_toggle_overlay'):
+            self.btn_toggle_overlay.setText(">" if active else "<")
+        
     def create_sidebar_header(self, text):
         lbl = QLabel(text)
         lbl.setStyleSheet("color: #667; font-size: 11px; font-weight: bold; margin-bottom: 5px;")
