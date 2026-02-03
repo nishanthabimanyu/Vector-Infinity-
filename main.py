@@ -20,16 +20,34 @@ class MainWindow(QMainWindow):
     def on_dashboard_requested(self):
         print("Dashboard requested! (Future implementation)")
 
+# --- VECTOR CORE INTEGRATION ---
+import qasync
+import asyncio
+from client.api.vector_client import VectorClient
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # LOAD FONTS
     QFontDatabase.addApplicationFont("assets/fonts/JetBrainsMono-Bold.ttf")
+
+    # [HEAVY INDUSTRY] Upgrade to Async Event Loop
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
     
-    window = MainWindow()
-    window.show()
+    # Initialize The Brain (Vector Client)
+    vector_client = VectorClient()
+    
+    # Initialize UI (The Logic Gate)
+    # The MainWindow class is no longer needed as LogicGate will be the main window
+    # and will be initialized directly with the vector_client.
+    logic_gate = LogicGate(vector_client) # Pass client to UI
+    logic_gate.show()
     
     # Graceful Shutdown
-    app.aboutToQuit.connect(window.logic_gate.shutdown)
+    app.aboutToQuit.connect(logic_gate.shutdown)
     
-    sys.exit(app.exec())
+    # Start the Engine
+    # Start the Engine
+    with loop:
+        loop.run_forever()

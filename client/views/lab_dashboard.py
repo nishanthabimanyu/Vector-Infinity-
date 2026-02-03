@@ -1,27 +1,53 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton
-from PySide6.QtCore import Qt, Signal
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# ================================================== #
+# Vector Infinity Lab Dashboard                      #
+# Research Lab View for Deep Space Analysis          #
+# ================================================== #
+
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+                               QLabel, QFrame)
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtWebEngineWidgets import QWebEngineView
 
 class LabDashboard(QWidget):
-    request_sidebar = Signal() # Signal to notify parent
+    request_sidebar = Signal()
 
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
+    def __init__(self, vector_client=None, parent=None):
+        super().__init__(parent)
+        self.vector_client = vector_client
         
-    def setup_ui(self):
-        master = QVBoxLayout(self)
-        master.setContentsMargins(0,0,0,0)
-        master.setSpacing(0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         
-        # TOP BAR Removed - Controlled by LogicGate Overlay
+        # Header / Toolbar
+        toolbar = QFrame()
+        toolbar.setStyleSheet("background-color: #0b0c10; border-bottom: 1px solid #1f2833;")
+        toolbar.setFixedHeight(50)
         
-        # MAIN CONTENT (Splitter)
-        wrapper = QWidget()
-        layout = QHBoxLayout(wrapper) 
-        layout.setContentsMargins(0, 0, 0, 0) # Zero margins for splitter
-        master.addWidget(wrapper)
+        tb_layout = QHBoxLayout(toolbar)
         
-        # --- LEFT: MANIFEST (Input) ---
-        lbl = QLabel("WAITING FOR NEXT INSTRUCTION...")
-        lbl.setStyleSheet("color: #4facfe; font-size: 20px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(lbl)
+        # Sidebar Toggle
+        self.btn_menu = QPushButton("☰")
+        self.btn_menu.setFixedSize(40, 30)
+        self.btn_menu.clicked.connect(self.request_sidebar.emit)
+        self.btn_menu.setStyleSheet("""
+            QPushButton { background: transparent; color: #66fcf1; font-size: 18px; border: none; }
+            QPushButton:hover { color: white; }
+        """)
+        tb_layout.addWidget(self.btn_menu)
+        
+        title = QLabel("RESEARCH LAB > CHROMIUM ENGINE")
+        title.setStyleSheet("color: #c5c6c7; font-weight: bold; letter-spacing: 1px;")
+        tb_layout.addWidget(title)
+        
+        tb_layout.addStretch()
+        layout.addWidget(toolbar)
+        
+        # Web View (Chromium)
+        self.browser = QWebEngineView()
+        self.browser.setStyleSheet("background-color: #000;")
+        # Default to a useful astronomy tool or a placeholder
+        self.browser.setUrl("https://stellarium-web.org/") 
+        
+        layout.addWidget(self.browser)

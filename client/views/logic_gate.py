@@ -12,6 +12,7 @@ from client.workers.stellarium_worker import StellariumWorker
 from client.views.lab_dashboard import LabDashboard
 from datetime import datetime
 from client.widgets.telemetry import SystemMonitor, LunarModule
+from client.widgets.chat_widget import VectorChatWidget
 import io
 
 class SilentWebPage(QWebEnginePage):
@@ -125,8 +126,10 @@ class LogicGate(QWidget):
         
         return super().eventFilter(obj, event)
 
-    def __init__(self):
+    def __init__(self, vector_client=None):
         super().__init__()
+        self.vector_client = vector_client
+
         
         # ThreadPool for Images
         self.thread_pool = QThreadPool()
@@ -144,6 +147,15 @@ class LogicGate(QWidget):
         # Build Columns
         self.setup_sidebar()
         self.setup_stage()
+
+    def style_sidebar_btn_secondary(self, btn):
+        btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.05); border: 1px solid #30363d;
+                color: #8b949e; font-weight: bold; padding: 10px; border-radius: 4px;
+            }
+            QPushButton:hover { background: rgba(255, 255, 255, 0.1); color: white; }
+        """)
 
         # Styles
         self.apply_styles()
@@ -234,9 +246,8 @@ class LogicGate(QWidget):
         btn_dev = QPushButton("DEV: OFFLINE LAB")
         btn_dev.setCursor(Qt.PointingHandCursor)
         def enter_dev_mode():
-            self.stage_stack.setCurrentIndex(2)
-            self.set_immersive_mode(True)
-            
+            self.stage_stack.setCurrentIndex(3) # Vector Chat
+            self.set_immersive_mode(True) # Collapse sidebar
         btn_dev.clicked.connect(enter_dev_mode)
         btn_dev.setStyleSheet("""
             QPushButton {
@@ -284,6 +295,12 @@ class LogicGate(QWidget):
         btn_dash.setStyleSheet("background: transparent; color: #8b949e; text-decoration: underline;")
         btn_dash.clicked.connect(lambda: self.stage_stack.setCurrentIndex(0)) # Home Index
         p2_layout.addWidget(btn_dash)
+
+        btn_chat = QPushButton("VECTOR CHAT")
+        btn_chat.setCursor(Qt.PointingHandCursor)
+        self.style_sidebar_btn_secondary(btn_chat)
+        btn_chat.clicked.connect(lambda: self.stage_stack.setCurrentIndex(3))
+        p2_layout.addWidget(btn_chat)
 
         p2_layout.addStretch()
         
@@ -359,10 +376,18 @@ class LogicGate(QWidget):
         self.setup_reader(self.reader_page)
         self.stage_stack.addWidget(self.reader_page)
 
-        # Page 2: Research Lab
-        self.lab_dashboard = LabDashboard()
+        # Page 2: Research Lab (Now Vector Chat)
+        self.lab_dashboard = LabDashboard(self.vector_client)
         self.lab_dashboard.request_sidebar.connect(self.toggle_immersive_mode)
         self.stage_stack.addWidget(self.lab_dashboard)
+
+        # [REMOVED] Vector Chat from Stack (It is now a Panel)
+
+        # Page 3: Vector Chat
+        self.vector_chat = VectorChatWidget(self.vector_client)
+        self.vector_chat.request_sidebar.connect(self.toggle_immersive_mode)
+        self.vector_chat.set_compact_mode(False) # Full layout by default
+        self.stage_stack.addWidget(self.vector_chat)
 
         self.main_layout.addWidget(self.stage_stack)
 
@@ -1346,9 +1371,13 @@ class LogicGate(QWidget):
             # Switch to Mission Control Sidebar
             self.sidebar_stack.setCurrentIndex(1) 
             
-            # [USER REQUEST] Hide Sidebar completely for "Fullscreen" feel
-            # We keep Mission Control logic in background if we ever want to "peek" at it, 
-            # but for now we hide the sidebar.
+            # Switch to Mission Control Sidebar
+            self.sidebar_stack.setCurrentIndex(1) 
+            
+            # [USER REQUEST] Primary View is now Vector Chat (Index 3)
+            self.stage_stack.setCurrentIndex(3)
+            
+            # [USER REQUEST] Hide Sidebar to focus on Chat (Immersive Mode)
             self.set_immersive_mode(True)
             
         else:
@@ -1381,10 +1410,11 @@ class LogicGate(QWidget):
         target_immersive = not self.sidebar_collapsed
         self.set_immersive_mode(target_immersive)
 
+    # [REMOVED] toggle_right_panel (Reverted to Stack View)
+
     def set_immersive_mode(self, active: bool):
         """Smoothly toggles sidebar visibility using QPropertyAnimation."""
         self.sidebar_collapsed = active
-        """Smoothly toggles sidebar visibility using QPropertyAnimation."""
         current_width = self.sidebar.width()
         
         if active: # CLOSING (Hide)
