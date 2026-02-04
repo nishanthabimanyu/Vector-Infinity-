@@ -10,6 +10,9 @@ from time import mktime
 class RSSWorker(QThread):
     feed_ready = Signal(list)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
     FEED_SOURCES = {
         # NEW: High-Res Image Feeds
         'NASA IOTD': 'https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss',

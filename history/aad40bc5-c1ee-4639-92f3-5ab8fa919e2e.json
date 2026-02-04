@@ -1,0 +1,12 @@
+{
+    "id": "aad40bc5-c1ee-4639-92f3-5ab8fa919e2e",
+    "created": "2026-02-04T09:56:34.588609",
+    "title": "New Conversation",
+    "messages": [
+        {
+            "role": "user",
+            "content": "hello",
+            "timestamp": "2026-02-04T09:56:38.481336"
+        }
+    ]
+}

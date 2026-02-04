@@ -28,6 +28,13 @@ from client.api.vector_client import VectorClient
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
+    # Debugging: Catch silent crashes
+    def exception_hook(exctype, value, traceback):
+        print(f"CRITICAL ERROR: {value}")
+        sys.__excepthook__(exctype, value, traceback)
+        sys.exit(1)
+    sys.excepthook = exception_hook
+    
     # LOAD FONTS
     QFontDatabase.addApplicationFont("assets/fonts/JetBrainsMono-Bold.ttf")
 

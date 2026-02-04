@@ -13,6 +13,7 @@ from client.views.lab_dashboard import LabDashboard
 from datetime import datetime
 from client.widgets.telemetry import SystemMonitor, LunarModule
 from client.widgets.chat_widget import VectorChatWidget
+from client.views.stellar_analytics import StellarAnalytics
 import io
 
 class SilentWebPage(QWebEnginePage):
@@ -198,9 +199,38 @@ class LogicGate(QWidget):
         self.apply_styles()
         
         # Start RSS Worker
-        self.rss_worker = RSSWorker()
+        self.rss_worker = RSSWorker(self)
         self.rss_worker.feed_ready.connect(self.update_feed)
         self.rss_worker.start()
+        
+        # [NEW] Status Timer for Sidebar Telemetry
+        self.status_timer = QTimer(self)
+        self.status_timer.setInterval(1000)
+        self.status_timer.timeout.connect(self.update_status)
+        self.status_timer.start()
+
+    def update_status(self):
+        """Fetch global Stellarium status for Sidebar"""
+        try:
+            url = "http://localhost:8090/api/main/status"
+            resp = requests.get(url, timeout=0.5)
+            if resp.status_code == 200:
+                data = resp.json()
+                
+                # Extract Data
+                fps = data.get('fps', 0)
+                fov = data.get('fov', 0)
+                time_local = data.get('time', {}).get('local', '--:--:--')
+                
+                # Update Labels
+                self.lbl_fps.setText(f"FPS: {fps:.1f}")
+                self.lbl_fov.setText(f"FOV: {fov:.1f}°")
+                # Format time string nice if possible, usually comes as ISO string but let's check
+                self.lbl_time.setText(f"T: {time_local}")
+        except:
+            # SIlent fail to keep sidebar clean
+            self.lbl_fps.setText("FPS: --")
+            pass
 
     def setup_sidebar(self):
         self.sidebar = QFrame()
@@ -278,6 +308,26 @@ class LogicGate(QWidget):
         """)
         p1_layout.addWidget(self.btn_connect)
         
+        # [NEW] Stellar Analytics Button (Direct Access)
+        btn_analytics_cf = QPushButton("STELLAR ANALYTICS LAB")
+        btn_analytics_cf.setCursor(Qt.PointingHandCursor)
+        btn_analytics_cf.setStyleSheet("""
+            QPushButton {
+                background: rgba(102, 252, 241, 0.1); 
+                border: 1px solid #66fcf1; 
+                color: #66fcf1; 
+                font-weight: bold; 
+                padding: 10px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover { background: rgba(102, 252, 241, 0.2); }
+        """)
+        def open_analytics():
+            self.stage_stack.setCurrentIndex(4) # Stellar Analytics
+            self.set_immersive_mode(True) # Collapse sidebar for full view
+        btn_analytics_cf.clicked.connect(open_analytics)
+        p1_layout.addWidget(btn_analytics_cf)
+        
         # DEV BUTTON
         p1_layout.addSpacing(10)
         btn_dev = QPushButton("DEV: OFFLINE LAB")
@@ -327,6 +377,14 @@ class LogicGate(QWidget):
         btn_lab.clicked.connect(lambda: self.stage_stack.setCurrentIndex(2)) # Lab Index
         p2_layout.addWidget(btn_lab)
 
+        # [NEW] Stellar Analytics Button
+        btn_analytics = QPushButton("STELLAR ANALYTICS")
+        btn_analytics.setCursor(Qt.PointingHandCursor)
+        self.style_sidebar_btn_secondary(btn_analytics)
+        # Assuming StellarAnalytics will be at index 4
+        btn_analytics.clicked.connect(lambda: self.stage_stack.setCurrentIndex(4))
+        p2_layout.addWidget(btn_analytics)
+
         btn_dash = QPushButton("DASHBOARD VIEW")
         btn_dash.setCursor(Qt.PointingHandCursor)
         btn_dash.setStyleSheet("background: transparent; color: #8b949e; text-decoration: underline;")
@@ -354,7 +412,7 @@ class LogicGate(QWidget):
         
         self.sidebar_stack.addWidget(self.page_config)
         self.sidebar_stack.addWidget(self.page_mission)
-
+        
         # Auth
         # layout.addWidget(self.create_sidebar_header("| AUTHENTICATION")) # Keep this below stack
 
@@ -426,6 +484,10 @@ class LogicGate(QWidget):
         self.vector_chat.request_sidebar.connect(self.toggle_immersive_mode)
         self.vector_chat.set_compact_mode(False) # Full layout by default
         self.stage_stack.addWidget(self.vector_chat)
+
+        # Page 4: Stellar Analytics
+        self.stellar_analytics = StellarAnalytics(self.vector_client)
+        self.stage_stack.addWidget(self.stellar_analytics)
 
         self.main_layout.addWidget(self.stage_stack)
 
