@@ -17,9 +17,9 @@ class Dispatcher:
         """
         self.window = window
 
-    async def dispatch(self, event: BaseEvent):
+    def dispatch(self, event: BaseEvent):
         """
-        Async entry point for dispatching events.
+        Sync entry point for dispatching events.
         Functions as the central nervous system.
         """
         if not isinstance(event, BaseEvent):
@@ -29,19 +29,27 @@ class Dispatcher:
         # 1. Logging (Debug)
         # print(f"[Dispatcher] Dispatching: {event.name}")
 
-        # 2. UI Updates (Sync, usually)
+        # 2. UI Updates (Sync)
         # We handle RenderEvents directly on the window/ui_controller
         if isinstance(event, RenderEvent):
             if self.window:
                 self.window.handle_render_event(event)
 
-        # 3. Kernel/Logic Routing (Async)
+        # 3. Kernel/Logic Routing (Async Scheduled)
         # Route to appropriate controllers based on event type
         if isinstance(event, KernelEvent):
-            await self._handle_kernel_event(event)
+            # Schedule async processing
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._handle_kernel_event(event))
+            except RuntimeError:
+                # No loop running (e.g. during sync tests), run sync or ignore
+                pass
         
-        # 4. Input Routing
-        # handled via Kernel usually, or specialized Input controller
+        # 4. Plugin Routing
+        # Dispatch to all enabled plugins
+        if hasattr(self.window, 'core') and self.window.core:
+             self.window.core.plugins.dispatch(event)
 
     async def _handle_kernel_event(self, event: KernelEvent):
         """
@@ -53,5 +61,5 @@ class Dispatcher:
             if event.name == KernelEvent.INPUT_USER:
                 # Example: Pass to MCP
                 prompt = event.data.get('value', '')
-                print(f"[Dispatcher] Routing Input to VectorClient: {prompt}")
+                # print(f"[Dispatcher] Routing Input to VectorClient: {prompt}")
                 # await self.window.vector_client.process_user_input(prompt) # Future method

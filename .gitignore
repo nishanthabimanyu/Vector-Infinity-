@@ -35,8 +35,11 @@ env/
 *.swp
 *.swo
 
+
 # Project Specific
 .gemini/
 brain/
 logs/
 tmp/
+py-gpt/
+*.jpg

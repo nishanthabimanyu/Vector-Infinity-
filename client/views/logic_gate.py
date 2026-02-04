@@ -26,6 +26,7 @@ class WorkerSignals(QObject):
 class ImageWorker(QRunnable):
     def __init__(self, url):
         super().__init__()
+        self.setAutoDelete(False) # [FIX] Prevent C++ deletion before Python is done
         self.url = url
         self.signals = WorkerSignals()
 
@@ -40,13 +41,25 @@ class ImageWorker(QRunnable):
                 image = QImage()
                 image.loadFromData(resp.content)
                 if not image.isNull():
-                    self.signals.finished.emit(image)
+                    try:
+                        self.signals.finished.emit(image)
+                    except RuntimeError:
+                        pass # Signal source deleted
                 else:
-                    self.signals.error.emit("Empty Image")
+                    try:
+                        self.signals.error.emit("Empty Image")
+                    except RuntimeError:
+                        pass
             else:
-                self.signals.error.emit(f"HTTP {resp.status_code}")
+                try:
+                    self.signals.error.emit(f"HTTP {resp.status_code}")
+                except RuntimeError:
+                    pass
         except Exception as e:
-            self.signals.error.emit(str(e))
+            try:
+                self.signals.error.emit(str(e))
+            except RuntimeError:
+                pass
 
 class InfoOverlay(QWidget):
     def __init__(self, parent=None):
@@ -138,6 +151,16 @@ class LogicGate(QWidget):
         # Context Overlay
         self.info_overlay = InfoOverlay() # Independent Window
         self.hover_filter = HoverFilter(self.info_overlay)
+
+        # [NEW] Initialize Core Architecture (Py-GPT style)
+        from client.core.engine import Core
+        from client.controller.main import Controller
+        
+        self.core = Core(self)
+        self.core.init()
+        
+        self.controller = Controller(self)
+        self.controller.setup()
         
         # Main Layout
         self.main_layout = QHBoxLayout(self)
@@ -147,6 +170,20 @@ class LogicGate(QWidget):
         # Build Columns
         self.setup_sidebar()
         self.setup_stage()
+
+    def handle_render_event(self, event):
+        """Handle UI updates from Dispatcher"""
+        if event.name == "render.append_text":
+            text = event.data.get("text", "")
+            # Append to Chat Widget
+            if hasattr(self, 'vector_chat'):
+                # We need to access the renderer directly or append to message list
+                # Assuming renderer is accessible or we use append_bot_message
+                if self.vector_chat.renderer:
+                     if event.data.get("type") == "input":
+                         self.vector_chat.renderer.append_user_message(text)
+                     else:
+                         self.vector_chat.renderer.append_bot_message(text)
 
     def style_sidebar_btn_secondary(self, btn):
         btn.setStyleSheet("""
@@ -384,7 +421,8 @@ class LogicGate(QWidget):
         # [REMOVED] Vector Chat from Stack (It is now a Panel)
 
         # Page 3: Vector Chat
-        self.vector_chat = VectorChatWidget(self.vector_client)
+        # We now pass the 'window' (self) to the ChatWidget so it can access window.controller
+        self.vector_chat = VectorChatWidget(self.vector_client, window=self)
         self.vector_chat.request_sidebar.connect(self.toggle_immersive_mode)
         self.vector_chat.set_compact_mode(False) # Full layout by default
         self.stage_stack.addWidget(self.vector_chat)
@@ -1303,9 +1341,14 @@ class LogicGate(QWidget):
         self.thread_pool.start(worker)
 
     def cleanup_worker(self, worker):
+        # [FIX] Defer cleanup to next loop iteration to prevent 
+        # "Signal source has been deleted" error if cleanup runs during emit()
+        QTimer.singleShot(0, lambda: self._safe_discard(worker))
+
+    def _safe_discard(self, worker):
         if worker in self.active_workers:
             self.active_workers.discard(worker)
-
+            
     def on_image_ready(self, image, label, worker):
         self.cleanup_worker(worker)
         try:

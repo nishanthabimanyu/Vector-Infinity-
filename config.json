@@ -1,0 +1,38 @@
+{
+    "model": "gemini-1.5-flash",
+    "api_key": "",
+    "temperature": 0.7,
+    "max_tokens": 1000,
+    "system_prompt": "You are Vector, an intelligent astronomy mission assistant.",
+    "plugins": {
+        "cmd_web": {
+            "enabled": true
+        },
+        "cmd_code": {
+            "enabled": false
+        }
+    },
+    "stellarium": {
+        "host": "localhost",
+        "port": 8090
+    },
+    "version": "1.0.0",
+    "theme": "dark",
+    "language": "en",
+    "mcp_servers": [],
+    "audio": {
+        "input_provider": "openai_whisper",
+        "output_provider": "openai_tts",
+        "enabled": false
+    },
+    "vision": {
+        "enabled": true,
+        "resolution": "auto"
+    },
+    "presets": {
+        "default": {
+            "name": "General Assistant",
+            "system_prompt": "You are a helpful assistant."
+        }
+    }
+}

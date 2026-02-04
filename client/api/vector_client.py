@@ -49,7 +49,7 @@ class VectorClient:
             self.is_connected = False
             return []
 
-    async def chat(self, user_message, context_telemetry=None):
+    async def chat(self, user_message, context_telemetry=None, model="claude-3-5-sonnet-latest", system_prompt_override=None):
         """
         Sends message to LLM + Context, executes MCP tools if requested.
         """
@@ -60,7 +60,7 @@ class VectorClient:
             return "⚠️ Missing Anthropic API Key. Please configure it in settings."
 
         # 1. Prepare Context (The "System Prompt" Injection)
-        system_prompt = (
+        system_prompt = system_prompt_override or (
             "You are Vector, an intelligent astronomy mission assistant. "
             "You have direct control over the Stellarium Observatory via MCP tools. "
             f"Current Telemetry: {context_telemetry}"
@@ -76,7 +76,7 @@ class VectorClient:
         try:
             # 3. Call LLM
             response = await self.llm.messages.create(
-                model="claude-3-5-sonnet-latest",
+                model=model,
                 max_tokens=1000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_message}],
