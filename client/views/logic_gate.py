@@ -329,20 +329,24 @@ class LogicGate(QWidget):
         p1_layout.addWidget(btn_analytics_cf)
         
         # DEV BUTTON
+        # MISSION HUB / INFO BUTTON
         p1_layout.addSpacing(10)
-        btn_dev = QPushButton("DEV: OFFLINE LAB")
-        btn_dev.setCursor(Qt.PointingHandCursor)
-        def enter_dev_mode():
-            self.stage_stack.setCurrentIndex(3) # Vector Chat
-            self.set_immersive_mode(True) # Collapse sidebar
-        btn_dev.clicked.connect(enter_dev_mode)
-        btn_dev.setStyleSheet("""
+        btn_hub = QPushButton("MISSION HUB")
+        btn_hub.setCursor(Qt.PointingHandCursor)
+        def open_hub():
+            self.stage_stack.setCurrentIndex(0) # Dashboard (Main Screen)
+            self.set_immersive_mode(False) 
+        btn_hub.clicked.connect(open_hub)
+        btn_hub.setStyleSheet("""
             QPushButton {
-                background: #238636; color: white; border-radius: 4px; padding: 5px; font-weight: bold;
+                background: rgba(255, 255, 255, 0.08); 
+                color: #e0e0e0; 
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px; padding: 10px; font-weight: bold; letter-spacing: 1px;
             }
-            QPushButton:hover { background: #2ea043; }
+            QPushButton:hover { background: rgba(255, 255, 255, 0.15); border: 1px solid white; color: white; }
         """)
-        p1_layout.addWidget(btn_dev)
+        p1_layout.addWidget(btn_hub)
         
         # Page 2: Mission Control
         self.page_mission = QWidget()
@@ -1479,8 +1483,8 @@ class LogicGate(QWidget):
             # Switch to Mission Control Sidebar
             self.sidebar_stack.setCurrentIndex(1) 
             
-            # [USER REQUEST] Primary View is now Vector Chat (Index 3)
-            self.stage_stack.setCurrentIndex(3)
+            # [USER REQUEST] Primary View is now Stellar Analytics (Index 4)
+            self.stage_stack.setCurrentIndex(4)
             
             # [USER REQUEST] Hide Sidebar to focus on Chat (Immersive Mode)
             self.set_immersive_mode(True)

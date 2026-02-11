@@ -43,3 +43,6 @@ logs/
 tmp/
 py-gpt/
 *.jpg
+
+*.bsp
+files/

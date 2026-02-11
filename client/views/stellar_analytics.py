@@ -1,11 +1,93 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                                QLabel, QFrame, QLineEdit, QComboBox, QCheckBox, 
                                QTableWidget, QTableWidgetItem, QHeaderView, QTextEdit, 
-                               QSplitter, QScrollArea, QProgressBar, QSizePolicy, QGroupBox, QGridLayout, QTabWidget)
+                               QSplitter, QScrollArea, QProgressBar, QSizePolicy, QGroupBox, QGridLayout, QTabWidget,
+                               QGraphicsEllipseItem, QStackedWidget)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QThread
 from PySide6.QtGui import QColor, QFont, QIcon
 import requests
 import json
+from client.ui.chat_widgets import ChatInterface
+
+class ChartContainer(QFrame):
+    maximize_requested = Signal(object, bool) # self, is_maximized
+
+    def __init__(self, plot_widget, title, color="#4facfe", parent=None):
+        super().__init__(parent)
+        self.plot_widget = plot_widget
+        self.color = color
+        self.is_maximized = False
+        
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet(f"""
+            QFrame {{ 
+                background-color: #0b0c10; 
+                border: 1px solid #2a2e38; 
+                border-radius: 6px; 
+            }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # --- Header ---
+        header = QFrame()
+        header.setFixedHeight(32)
+        header.setStyleSheet(f"""
+            QFrame {{ 
+                background-color: #161920; 
+                border-bottom: 1px solid #2a2e38; 
+                border-top-left-radius: 6px; 
+                border-top-right-radius: 6px;
+            }}
+        """)
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(10, 0, 5, 0)
+        
+        lbl_title = QLabel(title.upper())
+        lbl_title.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px; border: none; background: transparent;")
+        
+        self.btn_max = QPushButton("⛶") # Maximize Symbol
+        self.btn_max.setCursor(Qt.PointingHandCursor)
+        self.btn_max.setFixedSize(24, 24)
+        self.btn_max.setToolTip("Maximize Chart")
+        self.btn_max.setStyleSheet("""
+            QPushButton { 
+                background: transparent; 
+                color: #8b949e; 
+                border: none; 
+                font-size: 14px;
+            }
+            QPushButton:hover { color: #ffffff; }
+        """)
+        self.btn_max.clicked.connect(self.toggle_maximize)
+        
+        hl.addWidget(lbl_title)
+        hl.addStretch()
+        hl.addWidget(self.btn_max)
+        
+        layout.addWidget(header)
+        
+        # --- Content ---
+        # PlotWidget sometimes has its own border/background, we override
+        plot_widget.setBackground('#0b0c10')
+        # Remove title from PlotWidget since we have our own header now
+        if hasattr(plot_widget, 'setTitle'):
+            plot_widget.setTitle(None)
+            
+        layout.addWidget(plot_widget)
+        
+    def toggle_maximize(self):
+        self.is_maximized = not self.is_maximized
+        if self.is_maximized:
+            self.btn_max.setText("↙") # Restore Symbol
+            self.btn_max.setToolTip("Restore View")
+        else:
+            self.btn_max.setText("⛶")
+            self.btn_max.setToolTip("Maximize Chart")
+            
+        self.maximize_requested.emit(self, self.is_maximized)
 
 class TelemetryCard(QFrame):
     def __init__(self, name, parent=None):
@@ -141,6 +223,377 @@ class TelemetryCard(QFrame):
         self.txt_visual.setText(vis_html)
         self.txt_technical.setText(tech_html)
 
+import pyqtgraph as pg
+import time
+import numpy as np
+
+
+
+
+# --- ASTRONOMICAL MATH UTILS ---
+# Ensuring the charts provide REAL value by calculating accurate positions.
+class AstroMath:
+    @staticmethod
+    def alt_az_at_hour_angle(dec_rad, lat_rad, ha_rad):
+        """
+        Convert Equatorial (Dec, HA) to Horizontal (Alt, Az).
+        Returns: (alt_rad, az_rad)
+        """
+        sin_dec = np.sin(dec_rad)
+        cos_dec = np.cos(dec_rad)
+        sin_lat = np.sin(lat_rad)
+        cos_lat = np.cos(lat_rad)
+        cos_ha = np.cos(ha_rad)
+        sin_ha = np.sin(ha_rad)
+        
+        # Altitude
+        sin_alt = sin_dec * sin_lat + cos_dec * cos_lat * cos_ha
+        alt_rad = np.arcsin(np.clip(sin_alt, -1.0, 1.0))
+        
+        # Azimuth
+        # cos(Az) = (sin(Dec) - sin(Lat)sin(Alt)) / (cos(Lat)cos(Alt))
+        # better: atan2 logic
+        # sin(Az) = - sin(HA) * cos(Dec) / cos(Alt)
+        # cos(Az) = ( sin(Dec) - sin(Lat)*sin(Alt) ) / ( cos(Lat)*cos(Alt) )
+        
+        cos_alt = np.cos(alt_rad)
+        if abs(cos_alt) < 1e-6: # Zenith/Nadir
+            az_rad = 0.0
+        else:
+            y = -sin_ha * cos_dec
+            x = (sin_dec - sin_lat * sin_alt)
+            # Note: Standard formula usually divides x by (cos_lat * cos_alt), 
+            # but for atan2(y, x) relative magnitude scaling of x/y doesn't matter 
+            # IF we drop the common positive terms? No, signs matter.
+            # Let's use the explicit full formula for x to be safe.
+            x = (sin_dec - sin_lat * sin_alt) / (cos_lat * cos_alt)
+            y = y / cos_alt
+            az_rad = np.arctan2(y, x)
+            
+        # Normalize Az to 0..2pi
+        if az_rad < 0: az_rad += 2*np.pi
+        
+        return alt_rad, az_rad
+
+
+class SkyPathAnalyzer(pg.PlotWidget):
+    """
+    Polar Plot showing the Sky Path (Arc) of celestial objects.
+    Center = Zenith (90 deg Alt), Rim = Horizon (0 deg Alt).
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackground('#0b0c10')
+        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size='12pt')
+        self.setAspectLocked(True)
+        self.showGrid(x=False, y=False)
+        self.hideAxis('left')
+        self.hideAxis('bottom')
+        self.setXRange(-100, 100)
+        self.setYRange(-100, 100)
+        
+        # --- POLAR GRID ---
+        pen_grid = pg.mkPen(color='#1f4068', width=1, style=Qt.DashLine)
+        pen_horizon = pg.mkPen(color='#4facfe', width=2)
+        
+        # Horizon (0 deg alt -> 90 radius)
+        horizon = QGraphicsEllipseItem(-90, -90, 180, 180)
+        horizon.setPen(pen_horizon)
+        self.addItem(horizon)
+        
+        # 30 deg alt -> 60 radius
+        alt_30 = QGraphicsEllipseItem(-60, -60, 120, 120)
+        alt_30.setPen(pen_grid)
+        self.addItem(alt_30)
+        
+        # 60 deg alt -> 30 radius
+        alt_60 = QGraphicsEllipseItem(-30, -30, 60, 60)
+        alt_60.setPen(pen_grid)
+        self.addItem(alt_60)
+        
+        # Crosshairs
+        self.addItem(pg.InfiniteLine(angle=0, pen=pen_grid))
+        self.addItem(pg.InfiniteLine(angle=90, pen=pen_grid))
+        
+        # Labels
+        labels = [('N', 0, 95), ('E', 95, 0), ('S', 0, -95), ('W', -95, 0)]
+        font = QFont("JetBrains Mono", 10, QFont.Bold)
+        for text, x, y in labels:
+            lbl = pg.TextItem(text, color='#4facfe', anchor=(0.5, 0.5))
+            lbl.setFont(font)
+            lbl.setPos(x, y)
+            self.addItem(lbl)
+            
+        self.paths = {} # {name: PlotCurveItem}
+        self.current_pos = {} # {name: ScatterPlotItem}
+
+    def update_plot(self, targets):
+        # targets: list of dicts
+        # We simulate a path based on current Alt/Az and projected movement
+        # Real calculation needs full ephemeris.
+        # We will use a simplified geometric arc for visual purpose.
+        
+        # 1. Clear old paths not in targets
+        active_names = set(t['name'] for t in targets)
+        existing = set(self.paths.keys())
+        for n in existing - active_names:
+            self.removeItem(self.paths[n])
+            del self.paths[n]
+            if n in self.current_pos:
+                self.removeItem(self.current_pos[n])
+                del self.current_pos[n]
+
+        if not targets:
+            return
+
+        # Use the first target to deduce rough Observer Latitude if possible, 
+        # or defaults (assuming user set location in Stellarium).
+        # We can try to reverse engineer Lat from Alt/Az/Ra/Dec if we had precise time?
+        # Too complex. We'll use a standard mid-latitude or try to get it from a bridge if available.
+        # For now: 28 deg N (Cape Canaveral / Standard) or 0 if we want neutral.
+        # Let's use 28.5 (KSC) as a good default for "Space" apps or ask user config.
+        # Actually better: 35 deg?
+        lat_rad = np.radians(28.5) 
+        
+        for item in targets:
+            name = item['name']
+            
+            # 1. Get Coordinates
+            try:
+                ra_now = np.radians(item.get('ra', 0))   # Right Ascension
+                dec_rad = np.radians(item.get('dec', 0)) # Declination
+                current_az_deg = item.get('az', 0)
+                current_alt_deg = item.get('alt', 0)
+                
+                # Reverse Engineer HA (Hour Angle) for "Now" to sync the curve?
+                # HA = LST - RA.
+                # We know Alt/Az/Dec/Lat -> can solve for HA.
+                # But simpler: We just sweep HA from -6h to +6h to show the "track".
+                # The track shape depends ONLY on Dec and Lat.
+                # The current position is just a point on that track.
+                
+                if name not in self.paths:
+                    color = '#f1c40f' if 'Sun' in name else '#bdc3c7'
+                    if 'Moon' in name: color = '#ecf0f1'
+                    self.paths[name] = self.plot([], [], pen=pg.mkPen(color=color, width=2, style=Qt.DashLine))
+                    self.current_pos[name] = pg.ScatterPlotItem(size=10, brush=pg.mkBrush(color))
+                    self.addItem(self.current_pos[name])
+
+                # --- CALCULATE TRACK ---
+                # Sweep HA from rise to set (approx -7h to +7h to be safe)
+                ha_vals = np.linspace(-np.radians(105), np.radians(105), 100) # +/- 7 hours
+                
+                path_x = []
+                path_y = []
+                
+                for ha in ha_vals:
+                    alt_rad, az_rad = AstroMath.alt_az_at_hour_angle(dec_rad, lat_rad, ha)
+                    alt_deg = np.degrees(alt_rad)
+                    
+                    if alt_deg >= 0: # Above Horizon
+                        r = 90 - alt_deg
+                        # Polar Plot: North is Top (0 deg angle)
+                        # PG Angle 0 is usually East (+X) or Right.
+                        # We map Azimuth (0=N, 90=E, 180=S, 270=W) to PG coords.
+                        # theta = 90 - Az (so N=90, E=0, S=-90/270...)
+                        theta_rad = np.radians(90) - az_rad
+                        
+                        px = r * np.cos(theta_rad)
+                        py = r * np.sin(theta_rad)
+                        path_x.append(px)
+                        path_y.append(py)
+                        
+                self.paths[name].setData(path_x, path_y)
+                
+                # --- ACTUAL CURRENT POSITION ---
+                if current_alt_deg > 0:
+                    r_cur = 90 - current_alt_deg
+                    az_rad_cur = np.radians(current_az_deg)
+                    theta_cur = np.radians(90) - az_rad_cur
+                    cx = r_cur * np.cos(theta_cur)
+                    cy = r_cur * np.sin(theta_cur)
+                    
+                    self.current_pos[name].setData([{'pos': (cx, cy), 'data': name}])
+                else:
+                    self.current_pos[name].setData([])
+                    
+            except Exception as e:
+                # print(f"SkyPath Error {name}: {e}")
+                pass
+
+class VisibilityCurve(pg.PlotWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackground('#0b0c10')
+        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size='10pt')
+        self.showGrid(x=True, y=True, alpha=0.3)
+        self.setLabel('left', 'Altitude', units='deg')
+        self.setLabel('bottom', 'Time Offset', units='h')
+        self.addLegend(offset=(5, 5))
+        self.curves = {}
+        
+    def update_plot(self, targets):
+        """
+        Plots the Altitude vs Time (Hour Angle relative to now).
+        Shows the object's Diurnal Curve.
+        """
+        # lat_rad = np.radians(28.5) # Default Lat (Can be improved)
+        # Using 13.0 deg N (Bangalore) since user is in +05:30 TZ approximately? 
+        # Actually user TZ is +05:30 (India). So Lat ~13 or ~28 (Delhi) is better than US.
+        lat_rad = np.radians(13.0) 
+        
+        # Current Sidereal Time / Hour Angle Sync
+        # We want "0" on X axis to be NOW.
+        # We compute Alt for HA_current + offset.
+        # Problem: We don't know HA_current exactly without LST.
+        # Trick: We know current Az/Alt. We can solve for HA!
+        # or... we just assume the object is near transit if Alt is high? No.
+        
+        # Robust method:
+        # Use the provided 'transit' time if available to shift the curve?
+        # Or... just use the `visible` Alt property as t=0.
+        # But prediction requires knowing if it's rising or setting.
+        # We can detect that from Azimuth!
+        # if Az < 180 (East side) -> Rising -> HA is negative.
+        # if Az > 180 (West side) -> Setting -> HA is positive.
+        
+        hours = np.linspace(0, 12, 50) # Future 12 hours
+        
+        # Color Cycle
+        colors = ['#4facfe', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#ffffff']
+        
+        active_names = set(t['name'] for t in targets)
+        existing = set(self.curves.keys())
+        for n in existing - active_names:
+            self.removeItem(self.curves[n])
+            del self.curves[n]
+
+        for idx, item in enumerate(targets):
+            name = item['name']
+            
+            if name not in self.curves:
+                 color = colors[idx % len(colors)]
+                 self.curves[name] = self.plot([], [], name=name, pen=pg.mkPen(color=color, width=2))
+            
+            # 1. Get current position
+            try:
+                dec_rad = np.radians(item.get('dec', 0))
+                current_alt = item.get('alt', 0)
+                current_az_rad = np.radians(item.get('az', 0))
+                
+                # 2. Solve for current Hour Angle (HA_now)
+                # sin(Alt) = sin(Dec)sin(Lat) + cos(Dec)cos(Lat)cos(HA)
+                # cos(HA) = (sin(Alt) - sin(Dec)sin(Lat)) / (cos(Dec)cos(Lat))
+                
+                sin_alt = np.sin(np.radians(current_alt))
+                sin_dec = np.sin(dec_rad)
+                sin_lat = np.sin(lat_rad)
+                cos_dec = np.cos(dec_rad)
+                cos_lat = np.cos(lat_rad)
+                
+                cos_ha = (sin_alt - sin_dec * sin_lat) / (cos_dec * cos_lat)
+                cos_ha = np.clip(cos_ha, -1.0, 1.0)
+                ha_mag = np.arccos(cos_ha) # 0 to pi
+                
+                # Determine sign of HA using Azimuth
+                # If Az is East (0..180), HA is negative (Rising)
+                # If Az is West (180..360), HA is positive (Setting)
+                # Note: Az 0 is North. East is 90.
+                if 0 < item.get('az', 0) < 180:
+                    ha_now = -ha_mag
+                else:
+                    ha_now = ha_mag
+                    
+                # 3. Compute Curve for next 12 hours
+                # 1 hour = 15 degrees = ~0.26 radians
+                time_offsets_hr = np.linspace(0, 12, 50)
+                y_vals = []
+                
+                for h in time_offsets_hr:
+                    # HA at time t = HA_now + t_hours (converted to rad)
+                    # Earth rotation rate: 2pi / 24h = pi/12 rad/h
+                    ha_t = ha_now + h * (np.pi / 12.0)
+                    
+                    alt_rad, _ = AstroMath.alt_az_at_hour_angle(dec_rad, lat_rad, ha_t)
+                    y_vals.append(np.degrees(alt_rad))
+                    
+                self.curves[name].setData(time_offsets_hr, y_vals)
+                
+            except Exception as e:
+                # print(f"Vis Error {name}: {e}")
+                pass
+
+class AtmosphereMonitor(pg.PlotWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackground('#0b0c10')
+        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10pt')
+        self.showGrid(x=True, y=True, alpha=0.3)
+        self.setLabel('left', 'Airmass / Mag', color='#8b949e')
+        self.addLegend()
+        
+        self.curve_air = self.plot(name='Airmass', pen=pg.mkPen('#e74c3c', width=2))
+        self.curve_mag = self.plot(name='Mag (Ext)', pen=pg.mkPen('#f1c40f', width=2))
+        
+        self.data_air = np.zeros(100)
+        self.data_mag = np.zeros(100)
+        self.ptr = 0
+
+    def update_plot(self, airmass, mag):
+        self.data_air[:-1] = self.data_air[1:]
+        self.data_air[-1] = airmass
+        
+        self.data_mag[:-1] = self.data_mag[1:]
+        self.data_mag[-1] = mag
+        
+        self.curve_air.setData(self.data_air)
+        self.curve_mag.setData(self.data_mag)
+
+class TelemetryGraph(pg.PlotWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackground('#0b0c10')
+        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10pt')
+        self.getAxis('left').setPen('#2a2e38')
+        self.getAxis('bottom').setPen('#2a2e38')
+        self.showGrid(x=True, y=True, alpha=0.3)
+        self.setLabel('left', 'Altitude (deg)', color='#8b949e')
+        self.setLabel('bottom', 'Time (s)', color='#8b949e')
+        self.addLegend(offset=(10, 10))
+        self.curves = {} # {name: plot_data_item}
+        self.pen_colors = ['#4facfe', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#ffffff']
+        self.color_idx = 0
+
+    def update_plot(self, graph_data):
+        # graph_data: {name: {'time': [], 'val': []}}
+        
+        # 1. Remove curves for objects not in data
+        current_names = set(graph_data.keys())
+        existing_names = set(self.curves.keys())
+        
+        for name in existing_names - current_names:
+            self.removeItem(self.curves[name])
+            del self.curves[name]
+            
+        # 2. Update/Add curves
+        for i, (name, data) in enumerate(graph_data.items()):
+            t = data['time']
+            v = data['val']
+            
+            if name not in self.curves:
+                color = self.pen_colors[self.color_idx % len(self.pen_colors)]
+                self.color_idx += 1
+                pen = pg.mkPen(color=color, width=2)
+                # Add symbol='o' to make points visible even if lines are flat/sparse
+                self.curves[name] = self.plot(t, v, name=name, pen=pen, symbol='o', symbolSize=4, symbolBrush=color)
+            
+            self.curves[name].setData(t, v)
+        
+        # Force auto-range occasionally or on first point? 
+        # Generally default is fine, but let's ensure it.
+        self.enableAutoRange('x', True)
+        self.enableAutoRange('y', True)
+
 class QueryWorker(QThread):
     results_ready = Signal(list)
     error_occurred = Signal(str)
@@ -226,6 +679,10 @@ class StellarAnalytics(QWidget):
         self.active_targets = set()
         self.cards = {}
         self.is_updating_table = False
+        
+        # Graph Data
+        self.graph_data = {} # {name: {'time': [], 'val': []}}
+        self.start_time = time.time()
         
         self.setStyleSheet("""
             QWidget { background-color: #0b0c10; color: #c5c6c7; font-family: 'JetBrains Mono', 'Segoe UI', sans-serif; }
@@ -319,22 +776,30 @@ class StellarAnalytics(QWidget):
         
         main_layout.addWidget(header)
         
-        # --- SPLIT VIEW (TABLE + INSPECTOR STACK) ---
+        # --- 3-COLUMN SPLIT VIEW (CONSOLE + TABLE + RIGHT PANEL) ---
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(2)
         splitter.setStyleSheet("""
             QSplitter::handle { background-color: #2a2e38; width: 2px; }
         """)
         
-        # LEFT: Table
+        # 1. LEFT: AI Chat Assistant (Refined UI)
+        self.ai_interface = ChatInterface()
+        self.ai_interface.messageSent.connect(self.send_ai_message)
+        
+        # Initialize AI Assistant (lazy load)
+        self.ai_assistant = None
+        
+        # 2. MIDDLE: Data Table
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
-        self.table.setHorizontalHeaderLabels(["OBJ", "TYPE", "MAG", "PHASE", "TRANSIT", "RA", "DEC", "ALT", "ACTIONS"])
+        self.table.setColumnCount(8)
+        self.table.setHorizontalHeaderLabels(["OBJ", "TYPE", "MAG", "PHASE", "TRANSIT", "RA", "DEC", "ALT"])
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(45)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setStyleSheet("""
             QTableWidget { background-color: #101218; border: 1px solid #2a2e38; border-radius: 6px; color: #e0e0e0; font-family: 'JetBrains Mono'; font-size: 11px; selection-background-color: rgba(79, 172, 254, 0.2); }
             QHeaderView::section { background-color: #161920; color: #8b949e; border: none; padding: 8px; font-weight: bold; text-align: left; font-size: 11px; }
@@ -346,46 +811,126 @@ class StellarAnalytics(QWidget):
         # Column Resizing Logic
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(8, QHeaderView.Fixed)
-        self.table.setColumnWidth(8, 320)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)  # Allow resizing
+        self.table.setColumnWidth(0, 180)  # Set initial width for obj names + checkbox
+        for i in range(1, 8): header.setSectionResizeMode(i, QHeaderView.Stretch)
         
-        # Connect Signals
-        # self.table.itemChanged.connect(self.handle_item_changed) # Removed: Using CheckBox widgets now
         self.table.cellClicked.connect(self.on_row_clicked)
+
+        # --- UNIVERSAL ACTION BAR ---
+        action_bar = QFrame()
+        action_bar.setStyleSheet("background: #161920; border-top: 1px solid #2a2e38; border-radius: 0px 0px 6px 6px;")
+        action_bar.setFixedHeight(50)
+        ab_layout = QHBoxLayout(action_bar)
+        ab_layout.setContentsMargins(15, 0, 15, 0)
+        ab_layout.setSpacing(10)
         
-        # RIGHT: Scrollable Inspector Area
-        scroll = QScrollArea()
-        scroll.setFixedWidth(400)
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background: transparent; border: none;") # Container logic
+        # Status Label for Actions (Keeps chat clean)
+        self.action_status = QLabel("")
+        self.action_status.setStyleSheet("color: #4facfe; font-weight: bold; font-family: 'JetBrains Mono'; font-size: 11px;")
         
-        self.scroll_content = QWidget()
-        self.cards_layout = QVBoxLayout(self.scroll_content)
-        self.cards_layout.setContentsMargins(0,0,0,0)
-        self.cards_layout.setSpacing(10)
-        self.cards_layout.addStretch() # Push cards up
+        # helper for action buttons
+        def create_action_btn(text, callback, color="#4facfe"):
+            btn = QPushButton(text)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(30)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(0, 0, 0, 0.2); 
+                    color: {color}; 
+                    border: 1px solid {color}; 
+                    border-radius: 4px; 
+                    font-weight: bold;
+                    font-family: 'JetBrains Mono';
+                    font-size: 11px;
+                    padding: 0px 15px;
+                    text-transform: uppercase;
+                }}
+                QPushButton:hover {{ background: {color}; color: #0b0c10; }}
+            """)
+            btn.clicked.connect(callback)
+            return btn
+
+        self.btn_slew = create_action_btn("SLEW", lambda: self.perform_universal_action("slew"))
+        self.btn_target = create_action_btn("TARGET", lambda: self.perform_universal_action("target"), color="#f39c12")
+        self.btn_watch = create_action_btn("WATCH", lambda: self.perform_universal_action("watch"), color="#2ecc71")
+
+        ab_layout.addWidget(self.action_status) # Status on the left
+        ab_layout.addStretch()
+        ab_layout.addWidget(self.btn_slew)
+        ab_layout.addWidget(self.btn_target)
+        ab_layout.addWidget(self.btn_watch)
+
+        # Wrap Table and Action Bar in a container layout
+        table_container = QWidget()
+        tc_layout = QVBoxLayout(table_container)
+        tc_layout.setContentsMargins(0,0,0,0)
+        tc_layout.setSpacing(0)
+        tc_layout.addWidget(self.table)
+        tc_layout.addWidget(action_bar)
+
+        # 2. RIGHT: Data Dashboard (QStackedWidget for Maximize Support)
+        self.dash_stack = QStackedWidget()
         
-        scroll.setWidget(self.scroll_content)
+        # PAGE 0: Grid Layout
+        page_grid = QWidget()
+        self.grid_layout = QGridLayout(page_grid)
+        self.grid_layout.setContentsMargins(10, 0, 0, 0)
+        self.grid_layout.setSpacing(10)
         
-        # Header for Inspector
-        insp_container = QWidget()
-        insp_layout = QVBoxLayout(insp_container)
-        insp_layout.setContentsMargins(0,0,0,0)
+        # Instantiate Charts
+        self.visibility = VisibilityCurve()
+        self.atmos = AtmosphereMonitor()
+        self.graph = TelemetryGraph()
+        self.skypath = SkyPathAnalyzer()
         
-        insp_label = QLabel("COSMIC INSPECTOR (MULTI-VIEW)")
-        insp_label.setStyleSheet("color: #4facfe; font-size: 14px; font-weight: bold; border-bottom: 2px solid #1f4068; padding: 10px; margin-bottom: 5px;")
-        insp_layout.addWidget(insp_label)
-        insp_layout.addWidget(scroll)
+        # Wrap in ChartContainers (Title moved to Container)
+        self.cont_vis = ChartContainer(self.visibility, "VISIBILITY FORECAST", "#2ecc71")
+        self.cont_atmos = ChartContainer(self.atmos, "ATMOSPHERE", "#e74c3c")
+        self.cont_tele = ChartContainer(self.graph, "LIVE TELEMETRY (1.5s)", "#4facfe")
+        self.cont_sky = ChartContainer(self.skypath, "SKY PATH (POLAR)", "#9b59b6")
         
-        insp_frame = QFrame()
-        insp_frame.setFixedWidth(400)
-        insp_frame.setLayout(insp_layout)
-        insp_frame.setStyleSheet("background-color: #0b0c10; border-left: 1px solid #2a2e38;")
+        # Store initial grid positions for restore: (row, col, rowspan, colspan)
+        # We have 4 charts now. 2x2 Grid.
+        self.chart_positions = {
+            self.cont_vis: (0, 0, 1, 1),
+            self.cont_sky: (0, 1, 1, 1),
+            self.cont_atmos: (1, 0, 1, 1),
+            self.cont_tele: (1, 1, 1, 1)
+        }
         
-        splitter.addWidget(self.table)
-        splitter.addWidget(insp_frame)
+        # Add to Grid
+        for container, pos in self.chart_positions.items():
+            r, c, rs, cs = pos
+            self.grid_layout.addWidget(container, r, c, rs, cs)
+            
+            # Connect Signal
+            container.maximize_requested.connect(self.handle_chart_maximize)
+
+        # Stretches
+        self.grid_layout.setRowStretch(0, 1)
+        self.grid_layout.setRowStretch(1, 1)
+        self.grid_layout.setColumnStretch(0, 1)
+        self.grid_layout.setColumnStretch(1, 1)
+        
+        # PAGE 1: Maximized Layout
+        page_max = QWidget()
+        self.max_layout = QVBoxLayout(page_max)
+        self.max_layout.setContentsMargins(10, 0, 0, 0)
+        self.max_layout.setSpacing(0)
+        
+        self.dash_stack.addWidget(page_grid)
+        self.dash_stack.addWidget(page_max)
+        
+        # Add to Splitter
+        splitter.addWidget(table_container)
+        splitter.addWidget(self.dash_stack)
+        
+        splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
+        
+        # Set Sizes: Table gets ~30%, Graphs get ~70%
+        splitter.setSizes([350, 850]) 
         
         main_layout.addWidget(splitter)
         return widget
@@ -394,6 +939,66 @@ class StellarAnalytics(QWidget):
         if self.live_chk.isChecked():
             self.refresh_timer.start()
             self.load_live_data()
+
+    def perform_universal_action(self, action_type):
+        """Execute action on currently selected object without polluting chat"""
+        # Get selected row
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            self.action_status.setText("⚠️ Select an object first")
+            QTimer.singleShot(2000, lambda: self.action_status.setText(""))
+            return
+            
+        row_idx = rows[0].row()
+        
+        widget = self.table.cellWidget(row_idx, 0)
+        obj_name = "Unknown"
+        if widget:
+            lbl = widget.findChild(QLabel)
+            if lbl:
+                obj_name = lbl.text()
+        
+        if obj_name == "Unknown":
+            return
+        
+        # Ensure AI is loaded
+        if not self.ai_assistant:
+            try:
+                from client.ai.assistant import StellariumAI
+                self.ai_assistant = StellariumAI()
+            except Exception as e:
+                self.action_status.setText("❌ AI Init Error")
+                return
+
+        # Execute Action (Show status in bar, not chat)
+        self.action_status.setText(f"🚀 {action_type.upper()}ING {obj_name}...")
+        
+        QTimer.singleShot(100, lambda: self._execute_ai_action_quietly(action_type, obj_name))
+
+    def _execute_ai_action_quietly(self, action_type, obj_name):
+        try:
+            msg = ""
+            if action_type == "slew":
+                resp = self.ai_assistant.slew_to_target(obj_name)
+                msg = f"✓ Slewed to {obj_name}"
+            elif action_type == "target":
+                resp = self.ai_assistant.slew_to_target(obj_name)
+                msg = f"✓ Targeted {obj_name}" 
+            elif action_type == "watch":
+                resp = self.ai_assistant.slew_to_target(obj_name, mode="zoom")
+                msg = f"✓ Watching {obj_name}"
+            
+            # Check for error in response string
+            if "❌" in resp:
+                self.action_status.setText(resp.replace("❌ ", "⚠ "))
+            else:
+                self.action_status.setText(msg)
+                
+            # Clear status after 3 seconds
+            QTimer.singleShot(3000, lambda: self.action_status.setText(""))
+            
+        except Exception as e:
+             self.action_status.setText(f"❌ Failed: {str(e)}")
 
     def toggle_monitoring(self, checked):
         if checked:
@@ -416,12 +1021,30 @@ class StellarAnalytics(QWidget):
 
         self.worker.start()
 
-    def handle_chk_toggled(self, checked, name):
-        if self.is_updating_table: return
-        if checked:
-            self.add_card(name)
+    def handle_chart_maximize(self, container, is_maximized):
+        if is_maximized:
+            # 1. Switch to Maximized Page
+            self.dash_stack.setCurrentIndex(1)
+            
+            # 2. Move Container to Max Layout
+            self.max_layout.addWidget(container)
+            
+            # In max view, we might want to ensure it has focus or expands properly?
+            # It's in a float-like state effectively.
+            
         else:
-            self.remove_card(name)
+            # Restore
+            # 1. Remove from Max Layout
+            self.max_layout.removeWidget(container)
+            
+            # 2. Add back to Grid at original position
+            if container in self.chart_positions:
+                r, c, rs, cs = self.chart_positions[container]
+                self.grid_layout.addWidget(container, r, c, rs, cs)
+            
+            # 3. Switch back to Grid Page
+            self.dash_stack.setCurrentIndex(0)
+
 
     def on_row_clicked(self, row, col):
         if self.is_updating_table: return
@@ -470,21 +1093,46 @@ class StellarAnalytics(QWidget):
             
             widget = self.table.cellWidget(row, 0)
             if widget:
-                # Find the checkbox/name? 
-                # This makes `on_row_clicked` harder.
-                pass
-            
-            # Simpler:
-            # Just fix the crash for now in `on_row_clicked`.
-            # The crash `AttributeError` was fixed.
-            # The `memory access` is likely unrelated or due to excessive refreshing.
-            
-            # Let's implement the `QCheckBox` widget approach without changing column count, 
-            # by putting both in a widget in Col 0.
-            
-            pass 
+                # Toggle the checkbox if row is clicked?
+                # For now, let's just let the user click the checkbox directly.
+                pass 
         except:
             pass
+    
+    def send_ai_message(self, message):
+        """Send message to AI assistant (Called by ChatInterface signal)"""
+        # Lazy load AI assistant
+        if not self.ai_assistant:
+            try:
+                from client.ai.assistant import StellariumAI
+                self.ai_assistant = StellariumAI()
+            except ValueError as e:
+                self.ai_interface.add_ai_message(f"❌ {str(e)}\\n\\nPlease set GEMINI_API_KEY environment variable.")
+                return
+            except Exception as e:
+                self.ai_interface.add_ai_message(f"❌ Failed to initialize AI: {str(e)}")
+                return
+        
+        # Send message asynchronously (using processEvents to keep UI responsive, 
+        # normally should be in a thread but requests are fast enough for now or blocking is acceptable for prototype)
+        # Ideally: Move to QThread
+        QApplication.processEvents() 
+        
+        try:
+            response = self.ai_assistant.send_message(message)
+            self.ai_interface.add_ai_message(response)
+        except Exception as e:
+            self.ai_interface.add_ai_message(f"❌ Error: {str(e)}")
+    
+    def reset_ai_chat(self):
+        """Reset AI conversation"""
+        if self.ai_assistant:
+            self.ai_assistant.reset_conversation()
+        # ChatInterface doesn't have a clear() method yet, let's add one or just re-init
+        # ideally we should add clear() to ChatInterface. 
+        # For now, we just add a system message.
+        self.ai_interface.add_ai_message("✅ Conversation Context Reset.")
+
             
     @staticmethod
     def decimal_to_hms(ra):
@@ -608,320 +1256,44 @@ class StellarAnalytics(QWidget):
         except Exception as e:
             print(f"Table Update Error: {e}")
         finally:
+            try: self.update_graph_data(data)
+            except: pass
             self.is_updating_table = False
 
-    def on_row_clicked(self, row, col):
+    def handle_chk_toggled(self, checked, name):
         if self.is_updating_table: return
-        try:
-            if col == 0: return 
-            
-            item = self.table.item(row, 0)
-            if not item: return
-            name = item.text()
-            
-            self.is_updating_table = True
-            try:
-                # 1. Clear Active Targets (logic only)
-                to_remove = list(self.active_targets)
-                for t in to_remove:
-                    if t != name:
-                        self.remove_card(t)
-                
-                # 2. Add New Target
-                self.add_card(name)
-                
-                # 3. Sync UIs (Iterate all rows)
-                for r in range(self.table.rowCount()):
-                    wid = self.table.cellWidget(r, 0)
-                    if wid:
-                        chk = wid.findChild(QCheckBox)
-                        nm_lbl = wid.findChild(QLabel)
-                        if chk and nm_lbl:
-                            nm = nm_lbl.text()
-                            chk.blockSignals(True) # Prevent recursion
-                            chk.setChecked(nm in self.active_targets)
-                            chk.blockSignals(False)
-            finally:
-                self.is_updating_table = False
-                
-        except Exception as e:
-            print(f"Row Click Error: {e}")
-            self.is_updating_table = False
+        if checked:
+            self.active_targets.add(name)
+        else:
+            if name in self.active_targets:
+                self.active_targets.remove(name)
+
+    def on_query_error(self, err):
+        self.count_lbl.setText("CONNECTION ERROR")
 
     def force_check(self, name):
-         self.is_updating_table = True
-         self.add_card(name)
-         # Update UI
+         if not name: return
+         
+         # 1. Update State
+         if name not in self.active_targets:
+             self.active_targets.add(name)
+         
+         # 2. Update Table UI (Checkbox)
          for r in range(self.table.rowCount()):
-             item = self.table.item(r, 0)
-             if item and item.text() == name:
-                 wid = self.table.cellWidget(r, 0)
-                 if wid:
+             wid = self.table.cellWidget(r, 0)
+             if wid:
+                 lbl = wid.findChild(QLabel)
+                 if lbl and lbl.text() == name:
                      chk = wid.findChild(QCheckBox)
                      if chk:
                         chk.blockSignals(True)
                         chk.setChecked(True)
                         chk.blockSignals(False)
-                 break
-         self.is_updating_table = False
-
-    def slew_to_target(self, target_name, mode='center'):
-        try:
-            url = "http://localhost:8090/api/main/focus"
-            requests.post(url, data={'target': target_name, 'mode': mode})
-        except:
-            pass
-            
-    def add_card(self, name):
-        if name in self.cards: return
-        self.active_targets.add(name)
-        card = TelemetryCard(name)
-        self.cards[name] = card
-        self.cards_layout.insertWidget(0, card)
-        
-        if hasattr(self, 'latest_data'):
-            for d in self.latest_data:
-                if d.get('name') == name:
-                    card.update_data(d['raw'])
-                    break
-
-    def remove_card(self, name):
-        if name in self.active_targets:
-            self.active_targets.remove(name)
-        if name in self.cards:
-            card = self.cards.pop(name)
-            self.cards_layout.removeWidget(card)
-            card.deleteLater()
-            
-    def on_query_error(self, err):
-        pass
-
-
-
-        obj_type = raw.get('type', 'Object')
-        morph = raw.get('morphology', '') 
-        if morph: obj_type += f" ({morph})"
-
-        # --- 1. Common Data ---
-        az = raw.get('azimuth', 0)
-        alt = raw.get('altitude', 0)
-        constellation = raw.get('constellation', '---')
-        dist_au = raw.get('distance', 0)
-        
-        # --- 2. Visual Tab Data ---
-        rise = raw.get('rise', '--:--')
-        transit = raw.get('transit', '--:--')
-        set_time = raw.get('set', '--:--')
-        
-        # ELONGATION SAFEGUARD
-        elong_raw = raw.get('elongation-deg', raw.get('elongation', 0))
-        try:
-            if isinstance(elong_raw, str):
-                elong = float(elong_raw.replace('°', '').replace("'", ''))
-            else:
-                elong = float(elong_raw)
-        except:
-            elong = 0.0
-            
-        elong_dir = "E" if elong > 0 else "W"
-        elong = abs(elong)
-        
-        diam_deg = raw.get('size-dd', 0) 
-        diam_arcsec = diam_deg * 3600
-        phase = raw.get('illumination', raw.get('phase', 0)) 
-        
-        # Magnitudes
-        mag = raw.get('vmag', 99.0)
-        mag_ext = raw.get('vmage', mag) # Extincted
-        abs_mag = raw.get('absolute-mag', raw.get('absolute-magnitude', '-'))
-
-        # --- 3. Technical Tab Data Extraction ---
-        # Airmass
-        airmass = raw.get('airmass', 0)
-        if airmass == 0 and alt > 0:
-            import math
-            try: airmass = 1.0 / math.sin(math.radians(alt))
-            except: airmass = 99.0
-        elif airmass == 0: airmass = 99.0 
-
-        am_color = "#2ecc71" # Green
-        if airmass > 1.5: am_color = "#f1c40f" # Yellow
-        if airmass > 2.5: am_color = "#e74c3c" # Red
-        
-        ha = raw.get('hourAngle-hms', raw.get('hourAngle', '--:--')) 
-        sidereal = raw.get('meanSidTm', '--:--')
-        
-        # Coordinates (JNow)
-        ra = raw.get('ra', 0)
-        dec = raw.get('dec', 0)
-        
-        # Coordinates (J2000)
-        ra_j2000 = raw.get('raJ2000', 0)
-        dec_j2000 = raw.get('decJ2000', 0)
-        
-        # Galactic
-        g_long = raw.get('glong', 0)
-        g_lat = raw.get('glat', 0)
-        
-        # Supergalactic
-        sg_long = raw.get('sglong', 0)
-        sg_lat = raw.get('sglat', 0)
-        
-        # Ecliptic
-        ecl_lat = raw.get('elat', 0)
-        ecl_long = raw.get('elong', 0) 
-        
-        # --- Context-Specific Data & Logic ---
-        
-        # 1. Satellites (TLE)
-        tle1 = raw.get('tle1', '')
-        tle2 = raw.get('tle2', '')
-        is_satellite = bool(tle1 and tle2) or "satellite" in obj_type.lower()
-        
-        # 2. Deep Sky (Cosmology)
-        redshift = raw.get('redshift', 0)
-        surface_brightness = raw.get('surface-brightness', 0)
-        is_galaxy = "galaxy" in obj_type.lower() or redshift != 0
-        
-        # 3. Stars (Astrophysics)
-        spectral = raw.get('spectral-class', '--')
-        bv_index = raw.get('bV', 0)
-        is_star = "star" in obj_type.lower() and not is_satellite
-        
-        # Distance Logic (Context Aware)
-        dist_val = raw.get('distance', 0)
-        dist_unit = "AU"
-        dist_display = f"{dist_val:.4f}"
-        
-        if is_star or is_galaxy:
-            d_ly = raw.get('distance-ly', 0)
-            if d_ly:
-                dist_display = f"{d_ly:.2f}"
-                dist_unit = "ly"
-        elif not is_satellite:
-            # For Solar System, maybe show km too?
-            d_km = raw.get('distance-km', 0)
-            if d_km > 0:
-                 # If nice to show km, we can append it, but keep AU as primary for now in position
-                 pass
-
-        # 4. Solar System (Physics)
-        dist_sun = raw.get('heliocentric-distance', 0)
-        velocity = raw.get('velocity-kms', raw.get('heliocentric-velocity-kms', 0))
-        
-        # PHASE ANGLE SAFEGUARD
-        pa_raw = raw.get('phase-angle-deg', 0)
-        try:
-            if isinstance(pa_raw, str):
-                phase_angle = float(pa_raw.replace('°', '').replace("'", ''))
-            else:
-                phase_angle = float(pa_raw)
-        except:
-            phase_angle = 0.0
-            
-        albedo = raw.get('albedo', 'N/A')
-
-        # --- HTML CSS ---
-        css = """
-            <style>
-                body { font-family: 'JetBrains Mono', monospace; color: #c5c6c7; margin: 5px; }
-                h2 { color: #ffffff; text-align: center; margin-bottom: 5px; letter-spacing: 2px; }
-                .type { color: #a29bfe; text-align: center; font-size: 10px; font-weight: bold; margin-bottom: 15px; }
-                h3 { color: #4facfe; border-bottom: 2px solid #1f4068; padding-bottom: 2px; margin-top: 15px; margin-bottom: 8px; font-size: 11px; font-weight: bold; }
-                .row { margin-bottom: 4px; font-size: 10px; }
-                .label { color: #8b949e; font-weight: bold; margin-right: 8px; }
-                .value { color: #66fcf1; }
-                .unit { color: #555; font-size: 9px; }
-                .highlight { color: #2ecc71; font-weight: bold; }
-                .badge { padding: 2px 4px; color: #000; font-weight: bold; border-radius: 2px; font-size: 9px; }
-                .code { font-family: 'Consolas', monospace; color: #f1c40f; font-size: 9px; display: block; margin-top: 2px; white-space: pre-wrap; }
-            </style>
-        """
-        
-        # --- 4. Build VISUAL Tab HTML ---
-        html_vis = f"""
-        <html><head>{css}</head><body>
-            <h2>{name}</h2>
-            <div class="type">{obj_type.upper()}</div>
-
-            <h3>🧭 POSITION</h3>
-            <div class="row"><span class="label">AZ/ALT:</span> <span class="highlight">{az:.1f}°</span> <span class="value">/</span> <span class="highlight">{alt:.1f}°</span></div>
-            <div class="row"><span class="label">CONSTELLATION:</span> <span class="value">{constellation}</span></div>
-            <div class="row"><span class="label">DISTANCE:</span> <span class="value">{dist_display}</span> <span class="unit">{dist_unit}</span></div>
-
-            <h3>🕒 VISIBILITY</h3>
-            <div class="row"><span class="label">RISE:</span> <span class="value">{rise}</span></div>
-            <div class="row"><span class="label">TRANSIT:</span> <span class="value">{transit}</span></div>
-            <div class="row"><span class="label">SET:</span> <span class="value">{set_time}</span></div>
-            <div class="row"><span class="label">ELONGATION:</span> <span class="value">{elong:.1f}°</span> <span class="unit">({elong_dir})</span></div>
-
-            <h3>🔭 OPTICS</h3>
-            <div class="row"><span class="label">APP SIZE:</span> <span class="value">{diam_arcsec:.2f}"</span> <span class="unit">arcsec</span></div>
-            <div class="row"><span class="label">PHASE:</span> <span class="value">{phase:.1f}%</span></div>
-            <div class="row"><span class="label">MAGNITUDE:</span> <span class="value">{mag:.2f}</span> <span class="unit">(Base)</span></div>
-            <div class="row"><span class="label">EXTINCTED:</span> <span class="value">{mag_ext:.2f}</span> <span class="unit">(Actual)</span></div>
-            
-            <div style="margin-top: 15px; background-color: #1f232a; height: 6px; border-radius: 3px;">
-                 <div style="background-color: #4facfe; width: {max(0, min(100, (alt+90)/1.8))}%; height: 100%; border-radius: 3px;"></div>
-            </div>
-            <div style="text-align: center; color: #444; font-size: 8px; margin-top: 4px;">ALTITUDE INDICATOR</div>
-        </body></html>
-        """
-        
-        # --- 5. Build TECHNICAL Tab HTML (Dynamic) ---
-        tech_body = f"""
-            <h2>{name}</h2>
-            <div class="type">SCIENTIFIC DATA</div>
-
-            <h3>📉 IMAGING METRICS</h3>
-            <div class="row"><span class="label">AIRMASS:</span> <span class="badge" style="background-color: {am_color};">{airmass:.2f}</span></div>
-            <div class="row"><span class="label">HOUR ANGLE:</span> <span class="value">{ha}</span></div>
-            <div class="row"><span class="label">SIDEREAL:</span> <span class="value">{sidereal}</span></div>
-
-            <h3>🗺️ COORDINATE SYSTEMS</h3>
-            <div class="row"><span class="label">RA/DEC (J2000):</span> <span class="value">{ra_j2000:.4f}° / {dec_j2000:.4f}°</span></div>
-            <div class="row"><span class="label">RA/DEC (NOW):</span> <span class="value">{ra:.4f}° / {dec:.4f}°</span></div>
-            <div class="row"><span class="label">GALACTIC:</span> <span class="value">{g_long:.2f}° / {g_lat:.2f}°</span></div>
-            <div class="row"><span class="label">ECLIPTIC:</span> <span class="value">{ecl_long:.2f}° / {ecl_lat:.2f}°</span></div>
-        """
-        
-        # Conditional Section
-        if is_satellite:
-             tech_body += f"""
-            <h3>🛰️ ORBITAL ELEMENTS</h3>
-            <div class="row"><span class="label">EPOCH:</span> <span class="value">{raw.get('tle-epoch', 'Unknown')}</span></div>
-            <div class="code">{tle1}</div>
-            <div class="code">{tle2}</div>
-            """
-        elif is_galaxy:
-             tech_body += f"""
-            <h3>🔭 COSMOLOGY</h3>
-            <div class="row"><span class="label">REDSHIFT:</span> <span class="value">{redshift:.5f}</span></div>
-            <div class="row"><span class="label">SURFACE BR:</span> <span class="value">{surface_brightness:.2f}</span></div>
-            <div class="row"><span class="label">ABS MAG:</span> <span class="value">{abs_mag}</span></div>
-            """
-        elif is_star:
-             tech_body += f"""
-            <h3>✨ ASTROPHYSICS</h3>
-            <div class="row"><span class="label">SPECTRAL:</span> <span class="value">{spectral}</span></div>
-            <div class="row"><span class="label">COLOR (B-V):</span> <span class="value">{bv_index:.2f}</span></div>
-            <div class="row"><span class="label">ABS MAG:</span> <span class="value">{abs_mag}</span></div>
-            <div class="row"><span class="label">PARALLAX:</span> <span class="value">{raw.get('parallax', 0):.4f}"</span></div>
-            """
-        else:
-             # Default (Planets/Moons)
-             tech_body += f"""
-            <h3>⚛ SOLAR PHYSICS</h3>
-            <div class="row"><span class="label">HELIO DIST:</span> <span class="value">{dist_sun:.4f}</span> <span class="unit">AU</span></div>
-            <div class="row"><span class="label">VELOCITY:</span> <span class="value">{velocity}</span> <span class="unit">km/s</span></div>
-            <div class="row"><span class="label">PHASE ANG:</span> <span class="value">{phase_angle:.2f}°</span></div>
-            <div class="row"><span class="label">ALBEDO:</span> <span class="value">{albedo}</span></div>
-            """
-            
-        html_tech = f"<html><head>{css}</head><body>{tech_body}</body></html>"
-
-        self.inspector_visual.setHtml(html_vis)
-        self.inspector_technical.setHtml(html_tech)
+                     break
+                     
+         # 3. Update Graphs immediately
+         if hasattr(self, 'latest_data'):
+             self.update_graph_data(self.latest_data)
 
     def slew_to_target(self, target_name, mode='center'):
         try:
@@ -930,7 +1302,61 @@ class StellarAnalytics(QWidget):
         except:
             pass
 
-    def on_query_error(self, err):
-        self.count_lbl.setText("CONNECTION ERROR")
+    def update_graph_data(self, data):
+        current_time = time.time() - self.start_time
+        
+        # 1. Update Data Structure for Live Telemetry
+        active_items = []
+        for item in data:
+            name = item.get('name')
+            if name in self.active_targets:
+                active_items.append(item)
+                if name not in self.graph_data:
+                    self.graph_data[name] = {'time': [], 'val': []}
+                
+                # Append new point
+                try:
+                    alt_val = float(item.get('alt', 0))
+                    self.graph_data[name]['time'].append(current_time)
+                    self.graph_data[name]['val'].append(alt_val)
+                except: pass
+                
+                # Limit history (e.g. 300 points)
+                if len(self.graph_data[name]['time']) > 300:
+                    self.graph_data[name]['time'].pop(0)
+                    self.graph_data[name]['val'].pop(0)
+        
+        # 2. Clean up inactive targets from graph_data
+        for name in list(self.graph_data.keys()):
+            if name not in self.active_targets:
+                del self.graph_data[name]
+                
+        # 3. Update Plots
+        self.graph.update_plot(self.graph_data)
+        
+
+        
+        # Visibility (Forecast for active targets)
+        self.visibility.update_plot(active_items)
+        
+        # Sky Path - Feed active items
+        self.skypath.update_plot(active_items)
+        
+        # Atmosphere (Monitor primary active target)
+        if active_items:
+            primary = active_items[0]
+            raw = primary.get('raw', {})
+            airmass = raw.get('airmass', 0)
+            # Simple airmass fallback if 0 (Zenith or error)
+            if airmass <= 0:
+                 alt_rad = np.radians(primary.get('alt', 90))
+                 if alt_rad > 0:
+                     airmass = 1.0 / np.sin(alt_rad)
+                 else:
+                     airmass = 10.0
+            
+            mag = primary.get('mag', 99)
+            self.atmos.update_plot(airmass, mag)
+            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10pt')
 
 

@@ -1,6 +1,9 @@
 PySide6
 requests
 feedparser
+PySide6
+requests
+feedparser
 psutil
 beautifulsoup4
 qasync
@@ -8,4 +11,7 @@ mcp
 anthropic
 pandas
 matplotlib
+markdown
+pyqtgraph
 msgspec
+numpy
