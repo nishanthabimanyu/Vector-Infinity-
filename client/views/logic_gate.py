@@ -14,6 +14,9 @@ from datetime import datetime
 from client.widgets.telemetry import SystemMonitor, LunarModule
 from client.widgets.chat_widget import VectorChatWidget
 from client.views.stellar_analytics import StellarAnalytics
+from client.views.orbital_dynamics import OrbitalDynamics
+from client.views.chronos_engine import ChronosEngine
+
 import io
 
 class SilentWebPage(QWebEnginePage):
@@ -235,18 +238,29 @@ class LogicGate(QWidget):
     def setup_sidebar(self):
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(350)
+        self.sidebar.setFixedWidth(280) # Narrower to fix congestion
         
-        layout = QVBoxLayout(self.sidebar)
-        layout.setContentsMargins(30, 50, 30, 50)
+        main_layout = QVBoxLayout(self.sidebar)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Scroll Area for Sidebar
+        self.scroll_sidebar = QScrollArea()
+        self.scroll_sidebar.setWidgetResizable(True)
+        self.scroll_sidebar.setStyleSheet("QScrollArea { border: none; background-color: #0b0c10; }")
+        
+        self.sidebar_content = QFrame()
+        self.sidebar_content.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(self.sidebar_content)
+        layout.setContentsMargins(20, 30, 20, 30)
         layout.setSpacing(15)
 
         # Header
         title = QLabel("VECTOR <font color='#4facfe'>INFINITY</font>")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: white; letter-spacing: 1px;")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; color: white; letter-spacing: 1px;")
         layout.addWidget(title)
         
-        layout.addSpacing(30)
+        layout.addSpacing(10)
 
         # Connection
         layout.addWidget(self.create_sidebar_header("| CONNECTION CONFIGURATION"))
@@ -327,6 +341,26 @@ class LogicGate(QWidget):
             self.set_immersive_mode(True) # Collapse sidebar for full view
         btn_analytics_cf.clicked.connect(open_analytics)
         p1_layout.addWidget(btn_analytics_cf)
+
+        # [NEW] Orbital Dynamics Button (Direct Access)
+        btn_orbital_cf = QPushButton("ORBITAL DYNAMICS")
+        btn_orbital_cf.setCursor(Qt.PointingHandCursor)
+        btn_orbital_cf.setStyleSheet(btn_analytics_cf.styleSheet()) # Reuse style
+        def open_orbital():
+            self.stage_stack.setCurrentIndex(5) # Orbital Dynamics
+            self.set_immersive_mode(True)
+        btn_orbital_cf.clicked.connect(open_orbital)
+        p1_layout.addWidget(btn_orbital_cf)
+        
+        # [NEW] Chronos Engine Button (Direct Access)
+        btn_chronos_cf = QPushButton("CHRONOS ENGINE")
+        btn_chronos_cf.setCursor(Qt.PointingHandCursor)
+        btn_chronos_cf.setStyleSheet(btn_analytics_cf.styleSheet()) # Reuse style
+        def open_chronos():
+            self.stage_stack.setCurrentIndex(6) # Chronos Engine
+            self.set_immersive_mode(True)
+        btn_chronos_cf.clicked.connect(open_chronos)
+        p1_layout.addWidget(btn_chronos_cf)
         
         # DEV BUTTON
         # MISSION HUB / INFO BUTTON
@@ -388,6 +422,22 @@ class LogicGate(QWidget):
         # Assuming StellarAnalytics will be at index 4
         btn_analytics.clicked.connect(lambda: self.stage_stack.setCurrentIndex(4))
         p2_layout.addWidget(btn_analytics)
+
+        # [NEW] Orbital Dynamics Button
+        btn_orbital = QPushButton("ORBITAL DYNAMICS")
+        btn_orbital.setCursor(Qt.PointingHandCursor)
+        self.style_sidebar_btn_secondary(btn_orbital)
+        btn_orbital.clicked.connect(lambda: self.stage_stack.setCurrentIndex(5))
+        p2_layout.addWidget(btn_orbital)
+
+        # [NEW] Chronos Engine Button
+        btn_chronos = QPushButton("CHRONOS ENGINE")
+        btn_chronos.setCursor(Qt.PointingHandCursor)
+        self.style_sidebar_btn_secondary(btn_chronos)
+        btn_chronos.clicked.connect(lambda: self.stage_stack.setCurrentIndex(6))
+        p2_layout.addWidget(btn_chronos)
+
+
 
         btn_dash = QPushButton("DASHBOARD VIEW")
         btn_dash.setCursor(Qt.PointingHandCursor)
@@ -458,6 +508,9 @@ class LogicGate(QWidget):
         btn_guest.setCursor(Qt.PointingHandCursor)
         layout.addWidget(btn_guest)
 
+        self.scroll_sidebar.setWidget(self.sidebar_content)
+        main_layout.addWidget(self.scroll_sidebar)
+        
         self.main_layout.addWidget(self.sidebar)
 
     def setup_stage(self):
@@ -492,6 +545,16 @@ class LogicGate(QWidget):
         # Page 4: Stellar Analytics
         self.stellar_analytics = StellarAnalytics(self.vector_client)
         self.stage_stack.addWidget(self.stellar_analytics)
+
+        # Page 5: Orbital Dynamics
+        self.orbital_dynamics = OrbitalDynamics(self.vector_client)
+        self.stage_stack.addWidget(self.orbital_dynamics)
+
+        # Page 6: Chronos Engine (Probabilistic Dating)
+        self.chronos_engine = ChronosEngine(self.vector_client)
+        self.stage_stack.addWidget(self.chronos_engine)
+
+
 
         self.main_layout.addWidget(self.stage_stack)
 

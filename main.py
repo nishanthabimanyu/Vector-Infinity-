@@ -30,6 +30,10 @@ if __name__ == "__main__":
     
     # Debugging: Catch silent crashes
     def exception_hook(exctype, value, traceback):
+        with open("crash_log.txt", "w") as f:
+            import traceback as tb
+            f.write(f"CRITICAL ERROR: {value}\n")
+            tb.print_exception(exctype, value, traceback, file=f)
         print(f"CRITICAL ERROR: {value}")
         sys.__excepthook__(exctype, value, traceback)
         sys.exit(1)
