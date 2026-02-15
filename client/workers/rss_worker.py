@@ -279,14 +279,13 @@ class RSSWorker(QThread):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
-            resp = requests.get(url, headers=headers, timeout=5)
+            resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
-                print(f"Feed Error {source}: Status {resp.status_code}")
+                # Silenced noisy print for cleaner terminal
                 return []
                 
             feed = feedparser.parse(resp.content)
             if not feed.entries: 
-                print(f"Feed Empty {source}")
                 pass
 
             for entry in feed.entries[:5]:
@@ -335,7 +334,8 @@ class RSSWorker(QThread):
                     'image': image_url,
                     'type': 'NEWS' # Default type
                 })
-        except Exception as e:
-            print(f"Parse Error {source}: {e}")
+        except Exception:
+            # Silenced noisy print
+            pass
             
         return items

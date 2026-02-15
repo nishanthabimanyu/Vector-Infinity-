@@ -45,25 +45,29 @@ class ImageWorker(QRunnable):
                 image = QImage()
                 image.loadFromData(resp.content)
                 if not image.isNull():
-                    try:
-                        self.signals.finished.emit(image)
-                    except RuntimeError:
-                        pass # Signal source deleted
+                    if hasattr(self, 'signals') and self.signals:
+                        try:
+                            self.signals.finished.emit(image)
+                        except (RuntimeError, AttributeError):
+                            pass 
                 else:
-                    try:
-                        self.signals.error.emit("Empty Image")
-                    except RuntimeError:
-                        pass
+                    if hasattr(self, 'signals') and self.signals:
+                        try:
+                            self.signals.error.emit("Empty Image")
+                        except (RuntimeError, AttributeError):
+                            pass
             else:
-                try:
-                    self.signals.error.emit(f"HTTP {resp.status_code}")
-                except RuntimeError:
-                    pass
+                if hasattr(self, 'signals') and self.signals:
+                    try:
+                        self.signals.error.emit(f"HTTP {resp.status_code}")
+                    except (RuntimeError, AttributeError):
+                        pass
         except Exception as e:
-            try:
-                self.signals.error.emit(str(e))
-            except RuntimeError:
-                pass
+            if hasattr(self, 'signals') and self.signals:
+                try:
+                    self.signals.error.emit(str(e))
+                except (RuntimeError, AttributeError):
+                    pass
 
 class InfoOverlay(QWidget):
     def __init__(self, parent=None):
@@ -94,7 +98,7 @@ class InfoOverlay(QWidget):
         
         self.desc = QLabel("Description...")
         self.desc.setWordWrap(True)
-        self.desc.setStyleSheet("color: #ccc; font-size: 11px; margin-top: 5px; line-height: 1.4;")
+        self.desc.setStyleSheet("color: #ccc; font-size: 10px; margin-top: 5px; line-height: 1.4;")
         
         fl.addWidget(self.title)
         fl.addWidget(self.desc)
@@ -129,8 +133,27 @@ class LogicGate(QWidget):
     request_dashboard = Signal()
 
     def shutdown(self):
+        # 1. RSS Worker
         if hasattr(self, 'rss_worker'):
             self.rss_worker.shutdown()
+            
+        # 2. Stellarium Worker
+        if hasattr(self, 'stellarium_worker'):
+            self.stellarium_worker.shutdown()
+            self.stellarium_worker.wait()
+            
+        # 3. Chronos Engine (Background Scans)
+        if hasattr(self, 'chronos_engine'):
+            self.chronos_engine.shutdown()
+            
+        # 4. Stellar Analytics (AI & Slew Workers)
+        if hasattr(self, 'stellar_analytics'):
+            self.stellar_analytics.shutdown()
+            
+        # 5. Image Workers (ThreadPool)
+        if hasattr(self, 'thread_pool'):
+            self.thread_pool.waitForDone(2000) 
+            self.active_workers.clear()
 
     def eventFilter(self, obj, event):
         # Click Outside Sidebar Logic
@@ -146,6 +169,8 @@ class LogicGate(QWidget):
     def __init__(self, vector_client=None):
         super().__init__()
         self.vector_client = vector_client
+        self.network_manager = QNetworkAccessManager(self)
+        self.network_manager.finished.connect(self.on_status_received)
 
         
         # ThreadPool for Images
@@ -174,6 +199,20 @@ class LogicGate(QWidget):
         # Build Columns
         self.setup_sidebar()
         self.setup_stage()
+        
+        # [OPTI] Centralized Styles
+        self.apply_styles()
+        
+        # [FIX] Start RSS Worker ONCE in __init__
+        self.rss_worker = RSSWorker(self)
+        self.rss_worker.feed_ready.connect(self.update_feed)
+        self.rss_worker.start()
+        
+        # [FIX] Status Timer for Sidebar Telemetry ONCE in __init__
+        self.status_timer = QTimer(self)
+        self.status_timer.setInterval(1000)
+        self.status_timer.timeout.connect(self.update_status)
+        self.status_timer.start()
 
     def handle_render_event(self, event):
         """Handle UI updates from Dispatcher"""
@@ -198,42 +237,28 @@ class LogicGate(QWidget):
             QPushButton:hover { background: rgba(255, 255, 255, 0.1); color: white; }
         """)
 
-        # Styles
-        self.apply_styles()
-        
-        # Start RSS Worker
-        self.rss_worker = RSSWorker(self)
-        self.rss_worker.feed_ready.connect(self.update_feed)
-        self.rss_worker.start()
-        
-        # [NEW] Status Timer for Sidebar Telemetry
-        self.status_timer = QTimer(self)
-        self.status_timer.setInterval(1000)
-        self.status_timer.timeout.connect(self.update_status)
-        self.status_timer.start()
-
     def update_status(self):
-        """Fetch global Stellarium status for Sidebar"""
-        try:
-            url = "http://localhost:8090/api/main/status"
-            resp = requests.get(url, timeout=0.5)
-            if resp.status_code == 200:
-                data = resp.json()
-                
-                # Extract Data
+        """Fetch global Stellarium status for Sidebar (Async)"""
+        url = QUrl("http://localhost:8090/api/main/status")
+        self.network_manager.get(QNetworkRequest(url))
+
+    def on_status_received(self, reply):
+        """Handle async status response"""
+        if reply.error() == QNetworkReply.NoError:
+            try:
+                data = json.loads(reply.readAll().data())
                 fps = data.get('fps', 0)
                 fov = data.get('fov', 0)
                 time_local = data.get('time', {}).get('local', '--:--:--')
                 
-                # Update Labels
                 self.lbl_fps.setText(f"FPS: {fps:.1f}")
                 self.lbl_fov.setText(f"FOV: {fov:.1f}°")
-                # Format time string nice if possible, usually comes as ISO string but let's check
                 self.lbl_time.setText(f"T: {time_local}")
-        except:
-            # SIlent fail to keep sidebar clean
+            except Exception as e:
+                pass
+        else:
             self.lbl_fps.setText("FPS: --")
-            pass
+        reply.deleteLater()
 
     def setup_sidebar(self):
         self.sidebar = QFrame()
@@ -337,7 +362,8 @@ class LogicGate(QWidget):
             QPushButton:hover { background: rgba(102, 252, 241, 0.2); }
         """)
         def open_analytics():
-            self.stage_stack.setCurrentIndex(4) # Stellar Analytics
+            # [OPTI] Defer index change to allow button style to update first
+            QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(4))
             self.set_immersive_mode(True) # Collapse sidebar for full view
         btn_analytics_cf.clicked.connect(open_analytics)
         p1_layout.addWidget(btn_analytics_cf)
@@ -347,7 +373,7 @@ class LogicGate(QWidget):
         btn_orbital_cf.setCursor(Qt.PointingHandCursor)
         btn_orbital_cf.setStyleSheet(btn_analytics_cf.styleSheet()) # Reuse style
         def open_orbital():
-            self.stage_stack.setCurrentIndex(5) # Orbital Dynamics
+            QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(5))
             self.set_immersive_mode(True)
         btn_orbital_cf.clicked.connect(open_orbital)
         p1_layout.addWidget(btn_orbital_cf)
@@ -357,7 +383,7 @@ class LogicGate(QWidget):
         btn_chronos_cf.setCursor(Qt.PointingHandCursor)
         btn_chronos_cf.setStyleSheet(btn_analytics_cf.styleSheet()) # Reuse style
         def open_chronos():
-            self.stage_stack.setCurrentIndex(6) # Chronos Engine
+            QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(6))
             self.set_immersive_mode(True)
         btn_chronos_cf.clicked.connect(open_chronos)
         p1_layout.addWidget(btn_chronos_cf)
@@ -412,7 +438,7 @@ class LogicGate(QWidget):
             }
             QPushButton:hover { background: rgba(31, 111, 235, 0.4); }
         """)
-        btn_lab.clicked.connect(lambda: self.stage_stack.setCurrentIndex(2)) # Lab Index
+        btn_lab.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(2))) # Lab Index
         p2_layout.addWidget(btn_lab)
 
         # [NEW] Stellar Analytics Button
@@ -420,21 +446,21 @@ class LogicGate(QWidget):
         btn_analytics.setCursor(Qt.PointingHandCursor)
         self.style_sidebar_btn_secondary(btn_analytics)
         # Assuming StellarAnalytics will be at index 4
-        btn_analytics.clicked.connect(lambda: self.stage_stack.setCurrentIndex(4))
+        btn_analytics.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(4)))
         p2_layout.addWidget(btn_analytics)
 
         # [NEW] Orbital Dynamics Button
         btn_orbital = QPushButton("ORBITAL DYNAMICS")
         btn_orbital.setCursor(Qt.PointingHandCursor)
         self.style_sidebar_btn_secondary(btn_orbital)
-        btn_orbital.clicked.connect(lambda: self.stage_stack.setCurrentIndex(5))
+        btn_orbital.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(5)))
         p2_layout.addWidget(btn_orbital)
 
         # [NEW] Chronos Engine Button
         btn_chronos = QPushButton("CHRONOS ENGINE")
         btn_chronos.setCursor(Qt.PointingHandCursor)
         self.style_sidebar_btn_secondary(btn_chronos)
-        btn_chronos.clicked.connect(lambda: self.stage_stack.setCurrentIndex(6))
+        btn_chronos.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(6)))
         p2_layout.addWidget(btn_chronos)
 
 
@@ -442,13 +468,13 @@ class LogicGate(QWidget):
         btn_dash = QPushButton("DASHBOARD VIEW")
         btn_dash.setCursor(Qt.PointingHandCursor)
         btn_dash.setStyleSheet("background: transparent; color: #8b949e; text-decoration: underline;")
-        btn_dash.clicked.connect(lambda: self.stage_stack.setCurrentIndex(0)) # Home Index
+        btn_dash.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(0))) # Home Index
         p2_layout.addWidget(btn_dash)
 
         btn_chat = QPushButton("VECTOR CHAT")
         btn_chat.setCursor(Qt.PointingHandCursor)
         self.style_sidebar_btn_secondary(btn_chat)
-        btn_chat.clicked.connect(lambda: self.stage_stack.setCurrentIndex(3))
+        btn_chat.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(3)))
         p2_layout.addWidget(btn_chat)
 
         p2_layout.addStretch()
@@ -553,6 +579,10 @@ class LogicGate(QWidget):
         # Page 6: Chronos Engine (Probabilistic Dating)
         self.chronos_engine = ChronosEngine(self.vector_client)
         self.stage_stack.addWidget(self.chronos_engine)
+
+        # [NEW] View Lifecycle Management
+        self.stage_stack.currentChanged.connect(self.on_view_changed)
+        self.previous_index = self.stage_stack.currentIndex()
 
 
 
@@ -890,7 +920,7 @@ class LogicGate(QWidget):
         
         # Content
         subtitle = QLabel("NOAA GEOSPACE DATA")
-        subtitle.setStyleSheet("color: #6c757d; font-size: 9px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
+        subtitle.setStyleSheet("color: #6c757d; font-size: 10px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
         layout.addWidget(subtitle)
         
         # K-Index Meter
@@ -934,7 +964,7 @@ class LogicGate(QWidget):
         layout.addWidget(title)
         
         sub = QLabel("UPCOMING MISSION")
-        sub.setStyleSheet("color: #6c757d; font-size: 9px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
+        sub.setStyleSheet("color: #6c757d; font-size: 10px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
         layout.addWidget(sub)
         
         # Large Countdown/Date
@@ -1001,7 +1031,7 @@ class LogicGate(QWidget):
         layout.addLayout(header_row)
         
         lbl_sub = QLabel(subtitle)
-        lbl_sub.setStyleSheet("color: #6c757d; font-size: 9px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
+        lbl_sub.setStyleSheet("color: #6c757d; font-size: 10px; font-weight: bold; margin-bottom: 5px; border: none; background: transparent;")
         layout.addWidget(lbl_sub)
         
         lbl_content = QLabel(content_text)
@@ -1382,7 +1412,7 @@ class LogicGate(QWidget):
         title.setAlignment(Qt.AlignTop)
         
         source = QLabel(item['source'].upper())
-        source.setStyleSheet("color: #4facfe; font-size: 9px; font-weight: bold;")
+        source.setStyleSheet("color: #4facfe; font-size: 10px; font-weight: bold;")
         
         l.addWidget(img)
         l.addSpacing(8)
@@ -1435,14 +1465,14 @@ class LogicGate(QWidget):
         
         # Source Badge
         src = QLabel(f"{item['source']}")
-        src.setStyleSheet("color: #4facfe; font-size: 9px; font-weight: bold;")
+        src.setStyleSheet("color: #4facfe; font-size: 10px; font-weight: bold;")
         
         tit = QLabel(item['title'])
         tit.setWordWrap(True)
         tit.setStyleSheet("color: white; font-size: 11px; font-weight: bold;") # White title
         
         date = QLabel(item['pubDate'][:16])
-        date.setStyleSheet("color: #6c757d; font-size: 9px;") # Muted Grey
+        date.setStyleSheet("color: #6c757d; font-size: 10px;") # Muted Grey
         
         t_layout.addWidget(src)
         t_layout.addWidget(tit)
@@ -1572,6 +1602,20 @@ class LogicGate(QWidget):
         self.status_text.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
 
     # --- HELPER FUNCTIONS ---
+    def on_view_changed(self, index):
+        """Standardized lifecycle hook for sub-views"""
+        # Hide previous
+        prev_widget = self.stage_stack.widget(self.previous_index)
+        if hasattr(prev_widget, 'on_hide'):
+            prev_widget.on_hide()
+            
+        # Show current
+        curr_widget = self.stage_stack.widget(index)
+        if hasattr(curr_widget, 'on_show'):
+            curr_widget.on_show()
+            
+        self.previous_index = index
+
     def toggle_immersive_mode(self):
         # Use explicit state tracking if available, fall back to width
         if not hasattr(self, 'sidebar_collapsed'):
@@ -1606,10 +1650,10 @@ class LogicGate(QWidget):
 
         # Animate
         self.sidebar_anim = QPropertyAnimation(self.sidebar, prop)
-        self.sidebar_anim.setDuration(500)
+        self.sidebar_anim.setDuration(200) # [OPTI] Faster transition
         self.sidebar_anim.setStartValue(start_val)
         self.sidebar_anim.setEndValue(end_val)
-        self.sidebar_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.sidebar_anim.setEasingCurve(QEasingCurve.OutQuad) # [OPTI] Smoother acceleration
         
         # Sync the 'Other' property at the end to lock FixedWidth
         def on_finished():
