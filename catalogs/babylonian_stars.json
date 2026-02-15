@@ -1,0 +1,58 @@
+{
+    "catalog_name": "Babylonian Normal Stars",
+    "epoch": "J2000",
+    "source": "Sachs & Hunger (1988-1996)",
+    "description": "Sample of stars used in Babylonian astronomical diaries for positional references",
+    "stars": [
+        {
+            "name": "Alpheratz",
+            "constellation": "Andromeda",
+            "hip_id": 677,
+            "ra_deg": 2.097,
+            "dec_deg": 29.09,
+            "magnitude": 2.06,
+            "pmra": 135.68,
+            "pmdec": -162.95
+        },
+        {
+            "name": "Mira",
+            "constellation": "Cetus",
+            "hip_id": 10826,
+            "ra_deg": 34.837,
+            "dec_deg": -2.978,
+            "magnitude": 3.04,
+            "pmra": 9.33,
+            "pmdec": -237.36
+        },
+        {
+            "name": "Hamal",
+            "constellation": "Aries",
+            "hip_id": 9884,
+            "ra_deg": 31.793,
+            "dec_deg": 23.462,
+            "magnitude": 2.00,
+            "pmra": 188.55,
+            "pmdec": -148.08
+        },
+        {
+            "name": "Alcyone (Pleiades)",
+            "constellation": "Taurus",
+            "hip_id": 17702,
+            "ra_deg": 56.871,
+            "dec_deg": 24.105,
+            "magnitude": 2.86,
+            "pmra": 19.35,
+            "pmdec": -43.67
+        },
+        {
+            "name": "Aldebaran",
+            "constellation": "Taurus",
+            "hip_id": 21421,
+            "ra_deg": 68.980,
+            "dec_deg": 16.509,
+            "magnitude": 0.85,
+            "pmra": 62.78,
+            "pmdec": -189.36
+        }
+    ]
+}

@@ -47,7 +47,7 @@ class LabDashboard(QWidget):
         # Web View (Chromium)
         self.browser = QWebEngineView()
         self.browser.setStyleSheet("background-color: #000;")
-        # Default to a useful astronomy tool or a placeholder
-        self.browser.setUrl("https://stellarium-web.org/") 
+        # Use a local placeholder to avoid preload warnings and memory overhead
+        self.browser.setUrl(r"file:///d:/Vector%20Infinity/client/ui/placeholder.html")
         
         layout.addWidget(self.browser)

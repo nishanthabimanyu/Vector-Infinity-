@@ -42,7 +42,26 @@ brain/
 logs/
 tmp/
 py-gpt/
+Infinity/
+Vector/
+Remote Control Endpoints/
 *.jpg
-
+*.png
 *.bsp
+*.h5
+!de441.h5
 files/
+history.json
+config.json
+crash_log.txt
+
+# Dev scripts
+reproduce_error.py
+test_skyfield.py
+verify_milestones.py
+v2_main.png
+PROJECT_README.md
+hdf5/
+history/
+models/
+demos/

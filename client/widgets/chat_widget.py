@@ -414,7 +414,7 @@ class RightSidebar(QFrame):
         # Description
         lbl_desc = QLabel("You can change the working mode and model in real-time.")
         lbl_desc.setWordWrap(True)
-        lbl_desc.setStyleSheet("color: #6e7681; font-size: 9px; margin-bottom: 5px;")
+        lbl_desc.setStyleSheet("color: #6e7681; font-size: 10px; margin-bottom: 5px;")
         layout.addWidget(lbl_desc)
         
         # 3. PRESETS
@@ -442,7 +442,7 @@ class RightSidebar(QFrame):
         
         lbl_preset_desc = QLabel("Create presets with different configurations to quickly switch between settings.")
         lbl_preset_desc.setWordWrap(True)
-        lbl_preset_desc.setStyleSheet("color: #6e7681; font-size: 9px; margin-bottom: 5px;")
+        lbl_preset_desc.setStyleSheet("color: #6e7681; font-size: 10px; margin-bottom: 5px;")
         layout.addWidget(lbl_preset_desc)
         
         # 4. SYSTEM PROMPT
@@ -477,7 +477,7 @@ class RightSidebar(QFrame):
         
         lbl_sys_desc = QLabel("The current system prompt can be modified in real time.")
         lbl_sys_desc.setWordWrap(True)
-        lbl_sys_desc.setStyleSheet("color: #6e7681; font-size: 9px;")
+        lbl_sys_desc.setStyleSheet("color: #6e7681; font-size: 10px;")
         layout.addWidget(lbl_sys_desc)
         
         # Save Button (Bottom)

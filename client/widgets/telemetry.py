@@ -11,6 +11,9 @@ class SystemMonitor(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+        
+        self.cpu_color = ""
+        self.ram_color = ""
 
         # Header
         layout.addWidget(self.create_header("SYSTEM DIAGNOSTICS"))
@@ -42,7 +45,7 @@ class SystemMonitor(QWidget):
         # Label Row
         h = QHBoxLayout()
         lbl = QLabel(label)
-        lbl.setStyleSheet("color: #8899a6; font-size: 9px; font-weight: bold;")
+        lbl.setStyleSheet("color: #8899a6; font-size: 10px; font-weight: bold;")
         val = QLabel("0%")
         val.setStyleSheet("color: #4facfe; font-family: 'JetBrains Mono'; font-size: 10px;")
         h.addWidget(lbl)
@@ -79,19 +82,23 @@ class SystemMonitor(QWidget):
         # Update CPU
         self.cpu_bar['bar'].setValue(int(cpu))
         self.cpu_bar['val'].setText(f"{cpu}%")
-        self.set_color(self.cpu_bar['bar'], cpu)
+        self.set_color(self.cpu_bar['bar'], cpu, 'cpu_color')
 
         # Update RAM
         self.ram_bar['bar'].setValue(int(ram))
         self.ram_bar['val'].setText(f"{ram}%")
-        self.set_color(self.ram_bar['bar'], ram)
+        self.set_color(self.ram_bar['bar'], ram, 'ram_color')
 
-    def set_color(self, bar, value):
+    def set_color(self, bar, value, current_attr):
         # Dynamic Color: Blue -> Orange -> Red
         color = "#4facfe"
         if value > 60: color = "#f39c12"
         if value > 85: color = "#e74c3c"
         
+        if getattr(self, current_attr) == color:
+            return
+            
+        setattr(self, current_attr, color)
         bar.setStyleSheet(f"""
             QProgressBar {{ background: #111; border: 1px solid #333; border-radius: 2px; }}
             QProgressBar::chunk {{ background-color: {color}; width: 4px; margin: 0.5px; }}

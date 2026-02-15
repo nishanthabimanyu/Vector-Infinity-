@@ -1,9 +1,6 @@
 PySide6
 requests
 feedparser
-PySide6
-requests
-feedparser
 psutil
 beautifulsoup4
 qasync
@@ -15,3 +12,6 @@ markdown
 pyqtgraph
 msgspec
 numpy
+skyfield
+h5py
+scipy

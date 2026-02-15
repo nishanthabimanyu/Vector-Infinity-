@@ -74,7 +74,7 @@ class ChartContainer(QFrame):
         plot_widget.setBackground('#0b0c10')
         # Remove title from PlotWidget since we have our own header now
         if hasattr(plot_widget, 'setTitle'):
-            plot_widget.setTitle(None)
+            plot_widget.setTitle("")
             
         layout.addWidget(plot_widget)
         
@@ -123,7 +123,7 @@ class TelemetryCard(QFrame):
             QTabWidget::pane { border: none; background: #0b0c10; }
             QTabBar::tab {
                 background: #161920; color: #8b949e; padding: 4px 10px;
-                border-bottom: 2px solid #2a2e38; font-weight: bold; font-size: 9px;
+                border-bottom: 2px solid #2a2e38; font-weight: bold; font-size: 10px;
             }
             QTabBar::tab:selected { color: #66fcf1; border-bottom: 2px solid #66fcf1; background: #1f232a; }
             QLabel { background-color: #0b0c10; border: none; color: #c5c6c7; font-family: 'Consolas', monospace; font-size: 10px; padding: 5px; }
@@ -178,7 +178,7 @@ class TelemetryCard(QFrame):
                 .row { margin-bottom: 2px; }
                 .label { color: #8b949e; font-weight: bold; margin-right: 5px; }
                 .value { color: #66fcf1; }
-                .unit { color: #555; font-size: 9px; }
+                .unit { color: #555; font-size: 10px; }
                 h3 { color: #4facfe; border-bottom: 1px solid #1f4068; margin: 8px 0 4px 0; font-size: 10px; }
             </style>
         """
@@ -284,7 +284,7 @@ class SkyPathAnalyzer(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size='12pt')
+        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size='12px')
         self.setAspectLocked(True)
         self.showGrid(x=False, y=False)
         self.hideAxis('left')
@@ -425,7 +425,7 @@ class VisibilityCurve(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size='10pt')
+        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size='10px')
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Altitude', units='deg')
         self.setLabel('bottom', 'Time Offset', units='h')
@@ -527,7 +527,7 @@ class AtmosphereMonitor(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10pt')
+        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10px')
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Airmass / Mag', color='#8b949e')
         self.addLegend()
@@ -553,7 +553,7 @@ class TelemetryGraph(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10pt')
+        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10px')
         self.getAxis('left').setPen('#2a2e38')
         self.getAxis('bottom').setPen('#2a2e38')
         self.showGrid(x=True, y=True, alpha=0.3)
@@ -1099,30 +1099,61 @@ class StellarAnalytics(QWidget):
         except:
             pass
     
+    def on_show(self):
+        """Resume monitoring when view is active"""
+        if self.live_chk.isChecked():
+            self.refresh_timer.start()
+
+    def on_hide(self):
+        """Pause monitoring when view is backgrounded"""
+        self.refresh_timer.stop()
+
+    def shutdown(self):
+        """Join all background threads before destruction"""
+        if hasattr(self, 'ai_worker') and self.ai_worker.isRunning():
+            self.ai_worker.wait(1000) # Give 1s to exit
+            
+        if hasattr(self, 'slew_worker') and self.slew_worker.isRunning():
+            self.slew_worker.wait(1000)
+            
     def send_ai_message(self, message):
-        """Send message to AI assistant (Called by ChatInterface signal)"""
-        # Lazy load AI assistant
+        """Send message to AI assistant (Threaded)"""
         if not self.ai_assistant:
             try:
                 from client.ai.assistant import StellariumAI
                 self.ai_assistant = StellariumAI()
-            except ValueError as e:
-                self.ai_interface.add_ai_message(f"❌ {str(e)}\\n\\nPlease set GEMINI_API_KEY environment variable.")
-                return
             except Exception as e:
-                self.ai_interface.add_ai_message(f"❌ Failed to initialize AI: {str(e)}")
+                self.ai_interface.add_ai_message(f"❌ Error: {str(e)}")
                 return
-        
-        # Send message asynchronously (using processEvents to keep UI responsive, 
-        # normally should be in a thread but requests are fast enough for now or blocking is acceptable for prototype)
-        # Ideally: Move to QThread
-        QApplication.processEvents() 
-        
-        try:
-            response = self.ai_assistant.send_message(message)
-            self.ai_interface.add_ai_message(response)
-        except Exception as e:
-            self.ai_interface.add_ai_message(f"❌ Error: {str(e)}")
+
+        # Disable input while processing
+        self.ai_interface.set_input_enabled(False)
+        self.ai_interface.add_ai_message("... VECTOR ANALYZING ...")
+
+        # Worker Thread
+        class AIWorker(QThread):
+            finished = Signal(str)
+            def __init__(self, assistant, msg):
+                super().__init__()
+                self.assistant = assistant
+                self.msg = msg
+            def run(self):
+                try:
+                    res = self.assistant.send_message(self.msg)
+                    self.finished.emit(res)
+                except Exception as e:
+                    self.finished.emit(f"❌ Error: {str(e)}")
+
+        self.ai_worker = AIWorker(self.ai_assistant, message)
+        self.ai_worker.finished.connect(self.on_ai_response)
+        self.ai_worker.start()
+
+    def on_ai_response(self, response):
+        """Handle threaded AI response"""
+        # Remove the loader message (last one)
+        # Assuming ChatInterface has a way to remove or we just append
+        self.ai_interface.add_ai_message(response)
+        self.ai_interface.set_input_enabled(True)
     
     def reset_ai_chat(self):
         """Reset AI conversation"""
@@ -1160,6 +1191,10 @@ class StellarAnalytics(QWidget):
     def update_table(self, data):
         self.latest_data = data 
         self.is_updating_table = True 
+        
+        # PERFORMANCE: Block UI Updates
+        self.table.setUpdatesEnabled(False)
+        
         try:
             self.table.setRowCount(len(data))
             self.count_lbl.setText(f"{len(data)} objects | {self.cat_combo.currentText()}")
@@ -1259,6 +1294,7 @@ class StellarAnalytics(QWidget):
             try: self.update_graph_data(data)
             except: pass
             self.is_updating_table = False
+            self.table.setUpdatesEnabled(True)
 
     def handle_chk_toggled(self, checked, name):
         if self.is_updating_table: return
@@ -1296,11 +1332,24 @@ class StellarAnalytics(QWidget):
              self.update_graph_data(self.latest_data)
 
     def slew_to_target(self, target_name, mode='center'):
-        try:
-            url = "http://localhost:8090/api/main/focus"
-            requests.post(url, data={'target': target_name, 'mode': mode})
-        except:
-            pass
+        """Slew to target (Async/Non-blocking)"""
+        url = QUrl("http://localhost:8090/api/main/focus")
+        # Reuse LogicGate's network manager logic if possible, 
+        # but here we'll just use a one-off thread or processEvents for simplicity 
+        # since it's a POST. Actually, let's just make it a background call.
+        
+        class SlewWorker(QThread):
+            def __init__(self, t, m):
+                super().__init__()
+                self.t = t
+                self.m = m
+            def run(self):
+                try:
+                    requests.post("http://localhost:8090/api/main/focus", data={'target': self.t, 'mode': self.m}, timeout=5)
+                except: pass
+        
+        self.slew_worker = SlewWorker(target_name, mode)
+        self.slew_worker.start()
 
     def update_graph_data(self, data):
         current_time = time.time() - self.start_time
@@ -1357,6 +1406,6 @@ class StellarAnalytics(QWidget):
             
             mag = primary.get('mag', 99)
             self.atmos.update_plot(airmass, mag)
-            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10pt')
+            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10px')
 
 
