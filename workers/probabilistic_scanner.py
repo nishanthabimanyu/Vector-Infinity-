@@ -82,6 +82,8 @@ class ProbabilisticScanWorker(QThread):
         matches = []
         batch_size = 100  # Emit every 100 matches
         
+        last_match_jd = -1.0
+        
         for i, jd in enumerate(jd_range):
             if self._cancelled:
                 logger.info("Scan cancelled by user")
@@ -95,23 +97,70 @@ class ProbabilisticScanWorker(QThread):
             # Evaluate all constraints
             score = evaluate_all_constraints(self.constraints, self.reader, jd)
             
-            # Emit if above threshold
-            if score >= self.threshold:
-                match = {
+            # Adaptive Logic: Trigger Fine Scan on "Warm" signal (> 0.2)
+            # Avoid re-scanning the same hotzone (check last_match_jd)
+            if score >= 0.2 and (jd - last_match_jd) > 10.0:
+                # Found a potential event. Pause course scan and drill down.
+                best_match = self._refine_hotzone(jd)
+                
+                if best_match and best_match['probability'] >= self.threshold:
+                     last_match_jd = jd # Mark this zone as processed
+                     
+                     self.match_found.emit(best_match)
+                     matches.append(best_match)
+                     
+                     # Emit batch if accumulated enough
+                     if len(matches) >= batch_size:
+                         df = pd.DataFrame(matches)
+                         self.batch_ready.emit(df)
+                         matches = []
+            
+            # Fallback for coarse matches (if we just want to log them)
+            elif score >= self.threshold:
+                 # This path usually won't be hit if threshold > 0.2, 
+                 # but keeps compatibility for non-adaptive constraints
+                 match = {
                     'jd': jd,
                     'date': self._jd_to_date(jd),
                     'probability': score
-                }
+                 }
+                 self.match_found.emit(match)
+                 matches.append(match)
+
+    def _refine_hotzone(self, coarse_jd: float) -> dict:
+        """
+        Stage 2: Fine-grained search around a coarse candidate.
+        Scans +/- 5 days with 15-minute resolution (0.01 days).
+        Returns the single best peak in this window.
+        """
+        from constraints import evaluate_all_constraints
+        
+        # Define window
+        window = 5.0 
+        fine_step = 0.01 # ~14.4 minutes
+        
+        start = coarse_jd - window
+        end = coarse_jd + window
+        
+        fine_range = np.arange(start, end, fine_step)
+        
+        best_score = -1.0
+        best_jd = -1.0
+        
+        for jd in fine_range:
+            score = evaluate_all_constraints(self.constraints, self.reader, jd)
+            if score > best_score:
+                best_score = score
+                best_jd = jd
                 
-                # Emit individual match
-                self.match_found.emit(match)
-                matches.append(match)
-                
-                # Emit batch if accumulated enough
-                if len(matches) >= batch_size:
-                    df = pd.DataFrame(matches)
-                    self.batch_ready.emit(df)
-                    matches = []
+        if best_score >= self.threshold:
+            return {
+                'jd': best_jd,
+                'date': self._jd_to_date(best_jd),
+                'probability': best_score,
+                'is_refined': True
+            }
+        return None
         
         # Emit remaining matches
         if matches:

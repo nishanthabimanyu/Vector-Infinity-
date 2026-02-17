@@ -172,6 +172,7 @@ class LogicGate(QWidget):
         """Ensure all background tasks stop when window is closed"""
         self.shutdown()
         event.accept()
+        return super().closeEvent(event)
 
     def __init__(self, vector_client=None):
         super().__init__()

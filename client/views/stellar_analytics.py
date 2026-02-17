@@ -284,7 +284,7 @@ class SkyPathAnalyzer(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size=12)
+        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size='12pt')
         self.setAspectLocked(True)
         self.showGrid(x=False, y=False)
         self.hideAxis('left')
@@ -425,7 +425,7 @@ class VisibilityCurve(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size=10)
+        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size='10pt')
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Altitude', units='deg')
         self.setLabel('bottom', 'Time Offset', units='h')
@@ -527,7 +527,7 @@ class AtmosphereMonitor(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size=10)
+        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10pt')
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Airmass / Mag', color='#8b949e')
         self.addLegend()
@@ -553,7 +553,7 @@ class TelemetryGraph(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size=10)
+        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10pt')
         self.getAxis('left').setPen('#2a2e38')
         self.getAxis('bottom').setPen('#2a2e38')
         self.showGrid(x=True, y=True, alpha=0.3)
@@ -1417,6 +1417,6 @@ class StellarAnalytics(QWidget):
             
             mag = primary.get('mag', 99)
             self.atmos.update_plot(airmass, mag)
-            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size=10)
+            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10pt')
 
 
