@@ -142,6 +142,10 @@ class LogicGate(QWidget):
             self.stellarium_worker.shutdown()
             self.stellarium_worker.wait()
             
+        # 2.1 Status Timer
+        if hasattr(self, 'status_timer'):
+            self.status_timer.stop()
+            
         # 3. Chronos Engine (Background Scans)
         if hasattr(self, 'chronos_engine'):
             self.chronos_engine.shutdown()
@@ -161,10 +165,14 @@ class LogicGate(QWidget):
             # If sidebar is OPEN (Visible) and we click the stage -> Close it
             if self.sidebar.width() > 0:
                 self.set_immersive_mode(True) # Hide Sidebar
-                return True # Consume event? Maybe not, allow interaction with stage?
-                # "tapping anywhere on the screen closes this panel" -> implies dismissal is priority.
-        
+                return True 
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        """Ensure all background tasks stop when window is closed"""
+        self.shutdown()
+        event.accept()
+        return super().closeEvent(event)
 
     def __init__(self, vector_client=None):
         super().__init__()
@@ -205,11 +213,13 @@ class LogicGate(QWidget):
         
         # [FIX] Start RSS Worker ONCE in __init__
         self.rss_worker = RSSWorker(self)
+        self.rss_worker.setObjectName("RSSWorker_Primary")
         self.rss_worker.feed_ready.connect(self.update_feed)
         self.rss_worker.start()
         
         # [FIX] Status Timer for Sidebar Telemetry ONCE in __init__
         self.status_timer = QTimer(self)
+        self.status_timer.setObjectName("LogicGate_StatusTimer")
         self.status_timer.setInterval(1000)
         self.status_timer.timeout.connect(self.update_status)
         self.status_timer.start()

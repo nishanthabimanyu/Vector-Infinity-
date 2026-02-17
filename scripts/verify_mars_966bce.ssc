@@ -1,0 +1,41 @@
+// VECTOR INFINITY VERIFICATION SCRIPT
+// Target: Match #21 - Mars Retrograde in Capricorn
+// Date: June 23, 966 BCE (JD 1368765.0)
+// Probability: 100.00%
+
+// Set exact date from Vector Infinity results
+// Note: Stellarium uses astronomical year numbering (-965 = 966 BCE)
+core.setJD(1368765.0);
+
+// Alternative: Set by calendar date
+// core.setDate("-0965-06-23T12:00:00", "utc", true);
+
+// Set observer to Ancient Babylon
+core.setObserverLocation(32.5, 44.4, 10, 1, "Babylon", "Earth");
+
+// Setup View
+core.selectObjectByName("Mars", true);
+StelMovementMgr.setFlagTracking(true);
+StelMovementMgr.zoomTo(40, 1); // Zoom to 40 degrees FOV
+
+// Show constellation boundaries
+ConstellationMgr.setFlagLines(true);
+ConstellationMgr.setFlagLabels(true);
+ConstellationMgr.setFlagBoundaries(true);
+
+// Visual Markers
+core.wait(2);
+core.debug("===== VISUAL VERIFICATION =====");
+core.debug("Mars should be inside Capricornus constellation");
+core.debug("Watch for retrograde loop motion (westward drift)");
+
+// Animate the Retrograde Loop
+// Jump forward 2 days at a time to see the "loop" motion
+core.debug("Animating retrograde motion (30 steps, 2 days each)...");
+for (i=0; i<30; i++) {
+    core.setDate("+2 days");
+    core.wait(0.2);
+}
+
+core.debug("===== VERIFICATION COMPLETE =====");
+core.debug("If Mars moved backwards (westward), Vector Infinity is ACCURATE!");

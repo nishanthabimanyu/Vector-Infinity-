@@ -13,6 +13,7 @@ class RetrogradeWorker(QThread):
 
     def __init__(self, manager, target_name, center_date, days_range=730):
         super().__init__()
+        self.setObjectName("RetrogradeWorker")
         self.manager = manager
         self.target_name = target_name
         self.center_date = center_date

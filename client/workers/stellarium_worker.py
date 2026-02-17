@@ -11,6 +11,7 @@ class StellariumWorker(QThread):
 
     def __init__(self, host="127.0.0.1", port=8090):
         super().__init__()
+        self.setObjectName("StellariumWorker_Primary")
         self.host = host
         self.port = port
         self.running = True

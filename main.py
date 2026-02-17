@@ -58,9 +58,14 @@ if __name__ == "__main__":
     # LOAD CUSTOM FONTS
     font_id = QFontDatabase.addApplicationFont("assets/fonts/JetBrainsMono-Bold.ttf")
     if font_id != -1:
-        font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
-        app_font = QFont(font_family, 10)
-        app.setFont(app_font)
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if families:
+            app_font = QFont(families[0], 10)
+            app.setFont(app_font)
+        else:
+            app.setFont(QFont("Consolas", 10)) # Fallback if family not found
+    else:
+        app.setFont(QFont("Consolas", 10)) # Fallback if font file missing
 
     # [HEAVY INDUSTRY] Upgrade to Async Event Loop
     loop = qasync.QEventLoop(app)

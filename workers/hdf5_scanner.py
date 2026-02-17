@@ -38,6 +38,7 @@ class EphemerisScanWorker(QThread):
                  observer_lon: float = 0.0,
                  constraints: Optional[List] = None):
         super().__init__()
+        self.setObjectName("EphemerisScanWorker")
         self.h5_path = Path(h5_path)
         self.jd_start = jd_start
         self.jd_end = jd_end

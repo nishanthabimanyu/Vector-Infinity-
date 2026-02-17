@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                 QLabel, QFrame, QLineEdit, QComboBox, QProgressBar, 
                                 QScrollArea, QSplitter, QSizePolicy, QSpacerItem, 
                                 QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-                                QListWidget, QListWidgetItem, QMenu)
+                                QListWidget, QListWidgetItem, QMenu, QGridLayout)
 from PySide6.QtCore import Qt, Signal, QTimer, Slot, QSize, QCoreApplication
 from PySide6.QtGui import QColor, QFont, QAction
 import logging
@@ -144,18 +144,39 @@ class ChronosEngine(QWidget):
         self.cl_layout.addStretch()
         cp_layout.addWidget(self.constraints_list_frame)
         
-        self.btn_add = QPushButton("+ SOURCE EVIDENCE")
-        self.btn_add.setCursor(Qt.PointingHandCursor)
-        self.btn_add.setStyleSheet("""
-            QPushButton {
-                background: #161b22; color: #4facfe; border: 1px dashed #4facfe;
-                padding: 12px; font-weight: bold; font-size: 10px; border-radius: 4px;
-            }
-            QPushButton:hover { background: rgba(79, 172, 254, 0.1); }
-        """)
-        self.btn_add.clicked.connect(self.show_milestone_menu)
-        cp_layout.addWidget(self.btn_add)
+        # Quick Event Grid
+        self.grid_events = QFrame()
+        self.grid_events.setStyleSheet("background: transparent;")
+        gl = QGridLayout(self.grid_events)
+        gl.setContentsMargins(0,0,0,0)
+        gl.setSpacing(10)
         
+        btn_conj = self.create_event_btn("CONJUNCTION", "Planetary Close Approach", 0)
+        btn_ecl = self.create_event_btn("ECLIPSE", "Solar/Lunar Eclipse", 2)
+        btn_retro = self.create_event_btn("RETROGRADE", "Apparent Backward Motion", 4)
+        btn_align = self.create_event_btn("ALIGNMENT", "Multi-Body Syzygy", 3)
+        
+        gl.addWidget(btn_conj, 0, 0)
+        gl.addWidget(btn_ecl, 0, 1)
+        gl.addWidget(btn_retro, 1, 0)
+        gl.addWidget(btn_align, 1, 1)
+        
+        cp_layout.addWidget(self.grid_events)
+        
+        # Preset Button
+        self.btn_preset = QPushButton("LOAD PRESET: GRAND ALIGNMENT")
+        self.btn_preset.setCursor(Qt.PointingHandCursor)
+        self.btn_preset.setStyleSheet("""
+            QPushButton {
+                background: rgba(46, 204, 113, 0.1); color: #2ecc71; 
+                border: 1px dashed #2ecc71; font-weight: bold; font-size: 10px; 
+                padding: 10px; border-radius: 4px;
+            }
+            QPushButton:hover { background: rgba(46, 204, 113, 0.2); }
+        """)
+        self.btn_preset.clicked.connect(self.load_preset_scenario)
+        cp_layout.addWidget(self.btn_preset)
+
         # Params Config (Hidden until needed)
         self.params_stack = QStackedWidget()
         self.setup_params_pages()
@@ -389,6 +410,46 @@ class ChronosEngine(QWidget):
             self.active_constraints.remove(item)
         item.deleteLater()
 
+    def create_event_btn(self, title, subtitle, page_idx):
+        btn = QPushButton(f"{title}\n{subtitle}")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+                padding: 10px; font-weight: bold; font-size: 10px; border-radius: 4px;
+                text-align: left;
+            }
+            QPushButton:hover { background: #1f232a; border-color: #4facfe; color: #4facfe; }
+        """)
+        btn.clicked.connect(lambda: self.set_params_page(page_idx))
+        return btn
+
+    def load_preset_scenario(self):
+        """Load a Grand Alignment scenario for immediate testing"""
+        # Clear existing
+        for item in self.active_constraints[:]:
+            self.remove_constraint(item)
+            
+        # 1. Conjunction: Moon-Jupiter
+        params1 = {"b1": "moon", "b2": "jupiter_barycenter", "sep": "2.0"}
+        c1 = ConstraintConjunction("moon", "jupiter_barycenter", 2.0)
+        item1 = MilestoneItem("Conjunction", params1)
+        item1.constraint_obj = c1
+        item1.removed.connect(self.remove_constraint)
+        self.cl_layout.insertWidget(self.cl_layout.count()-1, item1)
+        self.active_constraints.append(item1)
+        
+        # 2. Alignment: Mercury-Venus-Saturn
+        params2 = {"bodies": 3, "spread": "15.0"}
+        c2 = ConstraintAlignment(["mercury", "venus", "saturn_barycenter"], 15.0)
+        item2 = MilestoneItem("Alignment", params2)
+        item2.constraint_obj = c2
+        item2.removed.connect(self.remove_constraint)
+        self.cl_layout.insertWidget(self.cl_layout.count()-1, item2)
+        self.active_constraints.append(item2)
+        
+        self.sweep_status.setText("PRESET LOADED: READY TO SCAN")
+
     def style_action_btn(self, btn, color):
         btn.setCursor(Qt.PointingHandCursor)
         btn.setFixedHeight(45)
@@ -445,7 +506,7 @@ class ChronosEngine(QWidget):
         self.jd_history = []
         self.prob_history = []
         self.progress_bar.setValue(0)
-        self.sweep_status.setText("SWEEPING TEMPORAL HORIZON | DETECTING HOTZONES...")
+        self.sweep_status.setText("SWEEPING TEMPORAL HORIZON | ADAPTIVE RESOLUTION ACTIVE...")
         
         # Preset Plot Range
         self.plot_widget.setXRange(start_jd, end_jd, padding=0.02)
