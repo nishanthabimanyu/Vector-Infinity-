@@ -12,6 +12,7 @@ class RSSWorker(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("RSSWorker_Primary")
 
     FEED_SOURCES = {
         # NEW: High-Res Image Feeds

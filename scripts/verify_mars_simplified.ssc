@@ -1,0 +1,29 @@
+// SIMPLIFIED MARS VERIFICATION SCRIPT
+// Manually set date step-by-step
+
+// Step 1: Set the Julian Date
+core.setJD(1368765.0);
+core.wait(1);
+
+// Step 2: Set location to Babylon
+core.setObserverLocation(32.5, 44.4, 10, 1, "Babylon", "Earth");
+core.wait(1);
+
+// Step 3: Select and track Mars
+core.selectObjectByName("Mars", true);
+StelMovementMgr.setFlagTracking(true);
+core.wait(1);
+
+// Step 4: Zoom to 40 degrees FOV
+StelMovementMgr.zoomTo(40, 2);
+core.wait(2);
+
+// Step 5: Show constellations
+ConstellationMgr.setFlagLines(true);
+ConstellationMgr.setFlagLabels(true);
+ConstellationMgr.setFlagBoundaries(true);
+core.wait(1);
+
+core.debug("Date set to JD 1368765.0 (966 BCE)");
+core.debug("Observer: Babylon");
+core.debug("Mars should be visible in Capricornus");

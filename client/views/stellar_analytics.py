@@ -284,7 +284,7 @@ class SkyPathAnalyzer(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size='12px')
+        self.setTitle("SKY PATH ANALYZER (POLAR)", color='#9b59b6', size=12)
         self.setAspectLocked(True)
         self.showGrid(x=False, y=False)
         self.hideAxis('left')
@@ -425,7 +425,7 @@ class VisibilityCurve(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size='10px')
+        self.setTitle("VISIBILITY FORECAST (12H)", color='#2ecc71', size=10)
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Altitude', units='deg')
         self.setLabel('bottom', 'Time Offset', units='h')
@@ -527,7 +527,7 @@ class AtmosphereMonitor(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10px')
+        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size=10)
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel('left', 'Airmass / Mag', color='#8b949e')
         self.addLegend()
@@ -553,7 +553,7 @@ class TelemetryGraph(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10px')
+        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size=10)
         self.getAxis('left').setPen('#2a2e38')
         self.getAxis('bottom').setPen('#2a2e38')
         self.showGrid(x=True, y=True, alpha=0.3)
@@ -600,6 +600,7 @@ class QueryWorker(QThread):
 
     def __init__(self, query_type, category):
         super().__init__()
+        self.setObjectName("StellarAnalytics_QueryWorker")
         self.query_type = query_type 
         self.category = category     
         
@@ -1111,10 +1112,18 @@ class StellarAnalytics(QWidget):
     def shutdown(self):
         """Join all background threads before destruction"""
         if hasattr(self, 'ai_worker') and self.ai_worker.isRunning():
-            self.ai_worker.wait(1000) # Give 1s to exit
+            self.ai_worker.requestInterruption()
+            self.ai_worker.wait(2000)
+            if self.ai_worker.isRunning():
+                self.ai_worker.terminate()
             
         if hasattr(self, 'slew_worker') and self.slew_worker.isRunning():
-            self.slew_worker.wait(1000)
+            self.slew_worker.wait(2000)
+            if self.slew_worker.isRunning():
+                self.slew_worker.terminate()
+                
+        if hasattr(self, 'query_worker') and hasattr(self.query_worker, 'isRunning') and self.query_worker.isRunning():
+            self.query_worker.wait(1000)
             
     def send_ai_message(self, message):
         """Send message to AI assistant (Threaded)"""
@@ -1135,6 +1144,7 @@ class StellarAnalytics(QWidget):
             finished = Signal(str)
             def __init__(self, assistant, msg):
                 super().__init__()
+                self.setObjectName("AIWorker_StellarAnalytics")
                 self.assistant = assistant
                 self.msg = msg
             def run(self):
@@ -1341,6 +1351,7 @@ class StellarAnalytics(QWidget):
         class SlewWorker(QThread):
             def __init__(self, t, m):
                 super().__init__()
+                self.setObjectName("SlewWorker_StellarAnalytics")
                 self.t = t
                 self.m = m
             def run(self):
@@ -1406,6 +1417,6 @@ class StellarAnalytics(QWidget):
             
             mag = primary.get('mag', 99)
             self.atmos.update_plot(airmass, mag)
-            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10px')
+            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size=10)
 
 

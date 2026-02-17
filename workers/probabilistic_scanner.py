@@ -36,16 +36,9 @@ class ProbabilisticScanWorker(QThread):
                  threshold: float = 0.5):
         """
         Initialize probabilistic scanner.
-        
-        Args:
-            reader: CachedEphemerisReader instance
-            start_jd: Start Julian date
-            end_jd: End Julian date
-            step_days: Step size in days
-            constraints: List of BayesianConstraint instances
-            threshold: Minimum probability to emit (0.0-1.0)
         """
         super().__init__()
+        self.setObjectName("ProbabilisticScanWorker")
         self.reader = reader
         self.start_jd = start_jd
         self.end_jd = end_jd
