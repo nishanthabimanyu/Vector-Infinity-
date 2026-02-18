@@ -567,6 +567,7 @@ class LogicGate(QWidget):
         # Page 2: Research Lab (Now Vector Chat)
         self.lab_dashboard = LabDashboard(self.vector_client)
         self.lab_dashboard.request_sidebar.connect(self.toggle_immersive_mode)
+        self.lab_dashboard.request_view_change.connect(self.open_module)
         self.stage_stack.addWidget(self.lab_dashboard)
 
         # [REMOVED] Vector Chat from Stack (It is now a Panel)
@@ -1204,7 +1205,16 @@ class LogicGate(QWidget):
             row, col = 0, 0
             MAX_COLS = 3
             
-            for item in news_items[1:7]: # Show up to 6 more items
+            # 1. Add Featured Module Card (Orbital Dynamics)
+            featured_card = self.create_featured_module_card(
+                "SOLAR DYNAMICS", 
+                "Relativistic spacetime mesh scanner. Analyzes gravitational wells and orbital trajectories using JPL DE441 data.",
+                index=5
+            )
+            self.grid_layout.addWidget(featured_card, row, col)
+            col += 1
+
+            for item in news_items[1:6]: # Show up to 5 more items
                 card = self.create_news_card(item)
                 self.grid_layout.addWidget(card, row, col)
                 
@@ -1369,6 +1379,60 @@ class LogicGate(QWidget):
 
         hero_layout.addWidget(text_container, 60) 
         hero_layout.addWidget(image_lbl, 40)
+
+    def create_featured_module_card(self, title_text, desc_text, index):
+        card = QFrame()
+        card.setFixedSize(220, 240) 
+        card.setObjectName("featured_card")
+        card.setStyleSheet("""
+            #featured_card {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #161b22, stop:1 #0d1117);
+                border: 1px solid #4facfe;
+                border-radius: 6px;
+            }
+            #featured_card:hover { border: 1px solid #00f2fe; background: #1c2128; }
+        """)
+        
+        l = QVBoxLayout(card)
+        l.setContentsMargins(15, 15, 15, 15)
+        
+        icon_lbl = QLabel("⚛")
+        icon_lbl.setStyleSheet("color: #4facfe; font-size: 32px; background: transparent;")
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        
+        title = QLabel(title_text)
+        title.setStyleSheet("color: #4facfe; font-size: 14px; font-weight: 900; letter-spacing: 1px;")
+        
+        desc = QLabel(desc_text)
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #8b949e; font-size: 11px; line-height: 1.4;")
+        
+        btn_launch = QPushButton("LAUNCH SCANNER")
+        btn_launch.setCursor(Qt.PointingHandCursor)
+        btn_launch.setStyleSheet("""
+            QPushButton {
+                background: rgba(79, 172, 254, 0.1); border: 1px solid #4facfe;
+                color: #4facfe; font-weight: bold; font-size: 10px; padding: 6px; border-radius: 3px;
+            }
+            QPushButton:hover { background: #4facfe; color: black; }
+        """)
+        btn_launch.clicked.connect(lambda: self.open_module(index))
+        
+        l.addWidget(icon_lbl)
+        l.addWidget(title)
+        l.addWidget(desc)
+        l.addStretch()
+        l.addWidget(btn_launch)
+        
+        card.setCursor(Qt.PointingHandCursor)
+        card.mousePressEvent = lambda e: self.open_module(index)
+        
+        return card
+
+    def open_module(self, index):
+        """Helper to switch view and collapse sidebar"""
+        self.stage_stack.setCurrentIndex(index)
+        self.set_immersive_mode(True)
 
     def create_news_card(self, item):
         card = QFrame()
