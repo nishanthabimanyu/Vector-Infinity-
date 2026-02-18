@@ -12,6 +12,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 class LabDashboard(QWidget):
     request_sidebar = Signal()
+    request_view_change = Signal(int) # Signal to request switching views
 
     def __init__(self, vector_client=None, parent=None):
         super().__init__(parent)
@@ -42,6 +43,23 @@ class LabDashboard(QWidget):
         tb_layout.addWidget(title)
         
         tb_layout.addStretch()
+
+        # Orbital Scanner Link
+        self.btn_orbital = QPushButton("ORBITAL SCANNER")
+        self.btn_orbital.setCursor(Qt.PointingHandCursor)
+        self.btn_orbital.setStyleSheet("""
+            QPushButton {
+                background: rgba(102, 252, 241, 0.1); 
+                border: 1px solid #66fcf1; 
+                color: #66fcf1; 
+                font-size: 10px; font-weight: bold; 
+                padding: 6px 12px; border-radius: 3px;
+            }
+            QPushButton:hover { background: #66fcf1; color: black; }
+        """)
+        self.btn_orbital.clicked.connect(lambda: self.request_view_change.emit(5))
+        tb_layout.addWidget(self.btn_orbital)
+        
         layout.addWidget(toolbar)
         
         # Web View (Chromium)

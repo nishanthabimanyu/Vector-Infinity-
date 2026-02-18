@@ -244,8 +244,8 @@ class ChronosEngine(QWidget):
         
         lp_layout.addWidget(self.create_section_label("LOGISTICS | IDENTIFIED MILESTONES"))
         
-        self.table = QTableWidget(0, 3) # Simplified columns
-        self.table.setHorizontalHeaderLabels(["UTC DATE", "JD", "PROB"])
+        self.table = QTableWidget(0, 4) # Consolidated columns
+        self.table.setHorizontalHeaderLabels(["UTC DATE", "JD", "PROB", "ACT"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setShowGrid(False)
@@ -569,8 +569,77 @@ class ChronosEngine(QWidget):
                 prob_item.setForeground(QColor("#2ecc71"))
                 self.table.setItem(row, 2, prob_item)
                 
+                # ACTION CELL (Composite Widget)
+                action_widget = QWidget()
+                aw_layout = QHBoxLayout(action_widget)
+                aw_layout.setContentsMargins(2, 2, 2, 2)
+                aw_layout.setSpacing(4)
+                
+                # Verify Button (Telescope)
+                btn_verify = QPushButton("🔭")
+                btn_verify.setToolTip("Verify in Stellarium")
+                btn_verify.setCursor(Qt.PointingHandCursor)
+                btn_verify.setFixedSize(24, 24)
+                btn_verify.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(31, 111, 235, 0.2); color: #58a6ff;
+                        border: 1px solid #1f6feb; border-radius: 3px; font-size: 12px;
+                    }
+                    QPushButton:hover { background: #1f6feb; color: white; }
+                """)
+                btn_verify.clicked.connect(lambda _, match=m: self.verify_event(match))
+                aw_layout.addWidget(btn_verify)
+                
+                # Analyze Button (Clipboard)
+                btn_analyze = QPushButton("📋")
+                btn_analyze.setToolTip("Copy Context for Analysis")
+                btn_analyze.setCursor(Qt.PointingHandCursor)
+                btn_analyze.setFixedSize(24, 24)
+                btn_analyze.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(155, 89, 182, 0.2); color: #9b59b6;
+                        border: 1px solid #8e44ad; border-radius: 3px; font-size: 12px;
+                    }
+                    QPushButton:hover { background: #8e44ad; color: white; }
+                """)
+                btn_analyze.clicked.connect(lambda _, match=m: self.analyze_event(match))
+                aw_layout.addWidget(btn_analyze)
+                
+                self.table.setCellWidget(row, 3, action_widget)
+                
                 if row == 499:
                     self.sweep_status.setText("⚠️ MAX LOGISTICS REACHED (500). SCAN CONTINUING...")
+
+    def verify_event(self, match):
+        """Send command to Stellarium to jump to this date"""
+        from client.api.stellarium_bridge import StellariumScriptBridge
+        bridge = StellariumScriptBridge()
+        
+        # Determine target based on active constraints
+        # Fallback to Sun if unknown, or infer from logic.
+        target = "Sun"
+        
+        script = bridge.generate_jump_script(match['jd'], target=target)
+        res = bridge.run_script(script)
+        
+        if "error" in res:
+             self.sweep_status.setText(f"❌ LINK FAILED: {res['error']}")
+        else:
+             self.sweep_status.setText(f"🔭 UPLINK ESTABLISHED | JUMPING TO {match['date']}")
+
+    def analyze_event(self, match):
+        """Generate LLM Context Packet and copy prompt to clipboard"""
+        from client.api.semantic_bridge import SemanticBridge
+        from PySide6.QtWidgets import QApplication
+        
+        bridge = SemanticBridge()
+        packet = bridge.generate_context_packet(match)
+        prompt = bridge.format_prompt(packet)
+        
+        clipboard = QApplication.clipboard()
+        clipboard.setText(prompt)
+        
+        self.sweep_status.setText(f"📋 CONTEXT COPIED | READY FOR LLM ANALYSIS")
 
     def refresh_discovery_profile(self):
         """Update graph from history buffer (called by QTimer)"""

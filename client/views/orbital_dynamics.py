@@ -1,20 +1,23 @@
 import sys
+import os
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph.opengl as gl
 from skyfield.api import load
 
-# Constants
 AU = 1.495978707e11  # m
 
 PLANET_DATA = {
     'sun': {'color': (1, 1, 0, 1), 'radius': 1.8, 'mass_factor': 6.0, 'well_spread': 8.0}, 
-    'mercury': {'color': (0.7, 0.7, 0.7, 1), 'radius': 0.4, 'mass_factor': 1.5, 'well_spread': 2.0},
+    'mercury': {'color': (0.7, 0.7, 0.7, 1), 'radius': 0.4, 'mass_factor': 1.5, 'well_spread': 4.0},
     'venus': {'color': (0.9, 0.7, 0.4, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
     'earth': {'color': (0.3, 0.5, 1.0, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
     'mars': {'color': (1, 0.4, 0.4, 1), 'radius': 0.5, 'mass_factor': 2.0, 'well_spread': 2.5},
     'jupiter': {'color': (0.8, 0.6, 0.5, 1), 'radius': 1.2, 'mass_factor': 4.5, 'well_spread': 5.0},
     'saturn': {'color': (0.9, 0.8, 0.6, 1), 'radius': 1.1, 'mass_factor': 4.0, 'well_spread': 4.5},
+    'uranus': {'color': (0.6, 0.8, 0.9, 1), 'radius': 0.9, 'mass_factor': 3.5, 'well_spread': 4.0},
+    'neptune': {'color': (0.4, 0.5, 1.0, 1), 'radius': 0.9, 'mass_factor': 3.5, 'well_spread': 4.0},
+    'pluto': {'color': (0.6, 0.5, 0.4, 1), 'radius': 0.3, 'mass_factor': 1.0, 'well_spread': 2.0},
 }
 
 class OrbitalDynamics(QtWidgets.QWidget):
@@ -47,19 +50,371 @@ class OrbitalDynamics(QtWidgets.QWidget):
         self.label.setGeometry(20, 20, 400, 240)
 
         self.bodies_pos = {}
+        self.body_well_pos = {} # Store deep positions
+        self.body_spheres = {} # Physical spheres in wells
+        self.body_labels = {} # Physical labels (bottom)
+        self.funnel_paths = {} # Surface paths {key: item}
         self.target_time = None
+        self.selected_body = None
         
         self.setup_data()
+        self.setup_controls() 
         self.setup_scene()
+        self.setup_labels()
         self.update_hud()
 
-    def setup_data(self):
+        # Update labels on a timer (Managed by on_show/on_hide)
+        self.label_timer = QtCore.QTimer()
+        self.label_timer.timeout.connect(self.update_label_positions)
+
+        # Connect Mouse Event
+        self.view.mousePressEvent = self.on_view_clicked
+
+    def setup_controls(self):
+        """Create a floating control panel for toggles and view selection."""
+        self.controls = QtWidgets.QWidget(self.view)
+        self.controls.setObjectName("controlPanel")
+        self.controls.setStyleSheet("""
+            #controlPanel {
+                background: rgba(0, 0, 0, 240);
+                border: 2px solid #00aaaa;
+                border-radius: 10px;
+            }
+        """)
+        self.controls_layout = QtWidgets.QVBoxLayout(self.controls)
+        self.controls_layout.setContentsMargins(15, 15, 15, 15)
+        self.controls_layout.setSpacing(12)
+        
+        # View Selector
+        self.view_combo = QtWidgets.QComboBox()
+        self.view_combo.addItems(["Perspective View", "Top-Down (Map)", "Side View (Section)"])
+        self.view_combo.setStyleSheet("""
+            QComboBox { 
+                color: #00ffff; 
+                background-color: #1a1a1a; 
+                border: 1px solid #00aaaa; 
+                border-radius: 4px;
+                padding: 10px;
+                font-family: 'Consolas';
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #00aaaa;
+                margin-right: 10px;
+            }
+            QComboBox QAbstractItemView {
+                color: #ffffff;
+                background-color: #1a1a1a;
+                selection-background-color: #00aaaa;
+                selection-color: #000000;
+                font-size: 14px;
+                border: 1px solid #00aaaa;
+            }
+        """)
+        self.view_combo.currentIndexChanged.connect(self.change_view)
+        self.controls_layout.addWidget(self.view_combo)
+
+        # Toggles
+        # Common style for all checkboxes
+        cb_style = """
+            QCheckBox { 
+                color: #00ffff; 
+                font-family: 'Consolas'; 
+                font-size: 14px; 
+                font-weight: bold;
+                spacing: 10px;
+                background: transparent;
+            }
+            QCheckBox::indicator { 
+                width: 18px; 
+                height: 18px; 
+                border: 2px solid #00aaaa; 
+                border-radius: 3px;
+                background: #000; 
+            }
+            QCheckBox::indicator:checked { 
+                background: #00aaaa; 
+            }
+        """
+
+        self.toggle_grid_cb = QtWidgets.QCheckBox("SHOW SPACETIME GRID")
+        self.toggle_grid_cb.setChecked(True)
+        self.toggle_grid_cb.setStyleSheet(cb_style)
+        self.toggle_grid_cb.toggled.connect(self.toggle_grid)
+        
+        self.toggle_flat_cb = QtWidgets.QCheckBox("FLAT SPACE (NEWTON)")
+        self.toggle_flat_cb.setChecked(False)
+        self.toggle_flat_cb.setStyleSheet("""
+            QCheckBox { 
+                color: #ffff00; 
+                font-family: 'Consolas'; 
+                font-size: 14px; 
+                font-weight: bold;
+                spacing: 10px;
+                background: transparent;
+            }
+            QCheckBox::indicator { 
+                width: 18px; 
+                height: 18px; 
+                border: 2px solid #ffff00; 
+                border-radius: 3px;
+                background: #000; 
+            }
+            QCheckBox::indicator:checked { 
+                background: #ffff00; 
+            }
+        """)
+        self.toggle_flat_cb.toggled.connect(self.toggle_flat_mode)
+        
+        self.toggle_orbits_cb = QtWidgets.QCheckBox("SHOW ORBITAL PATHS")
+        self.toggle_orbits_cb.setChecked(True)
+        self.toggle_orbits_cb.setStyleSheet(cb_style)
+        self.toggle_orbits_cb.toggled.connect(self.toggle_orbits)
+        
+        self.controls_layout.addWidget(self.toggle_grid_cb)
+        self.controls_layout.addWidget(self.toggle_flat_cb)
+        self.controls_layout.addWidget(self.toggle_orbits_cb)
+
+        # Date Input
+        self.date_input = QtWidgets.QLineEdit("1919-05-29")
+        self.date_input.setStyleSheet("""
+            QLineEdit { 
+                background: #000; color: #00ffff; 
+                border: 1px solid #00aaaa; border-radius: 3px; 
+                padding: 5px; font-family: 'Consolas'; font-weight: bold;
+            }
+        """)
+        self.controls_layout.addWidget(self.date_input)
+
+        self.calc_btn = QtWidgets.QPushButton("CALCULATE")
+        self.calc_btn.setStyleSheet("""
+            QPushButton { 
+                background: #00aaaa; color: black; font-weight: bold; 
+                border-radius: 3px; padding: 8px; font-family: 'Consolas';
+            }
+            QPushButton:hover { background: #00ffff; }
+        """)
+        self.calc_btn.clicked.connect(self.on_calculate_clicked)
+        self.controls_layout.addWidget(self.calc_btn)
+        
+        # Position in top-right (Expanded to prevent clipping)
+        self.controls.setGeometry(self.width() - 270, 20, 250, 380)
+
+    def change_view(self, index):
+        """Switch camera perspective."""
+        # 1. Update Camera Position
+        if index == 0: # Perspective
+            self.view.setCameraPosition(distance=1000, elevation=45, azimuth=-45)
+        elif index == 1: # Top-Down (Map)
+            self.view.setCameraPosition(distance=1200, elevation=90, azimuth=-90)
+        elif index == 2: # Side View
+            self.view.setCameraPosition(distance=1500, elevation=0, azimuth=-90)
+
+    def toggle_grid(self, visible):
+        """Toggle the spacetime fabric mesh."""
+        self.grid.setVisible(visible)
+
+    def toggle_orbits(self, visible):
+        """Toggle the physical orbital layers (bottom)."""
+        for path in self.funnel_paths.values():
+            path.setVisible(visible)
+
+    def toggle_flat_mode(self, checked):
+        """Toggle between Curved Spacetime (Einstein) and Flat Space (Newton)."""
+        self.flat_mode = checked
+        if self.date_input:
+            self.update_simulation(self.date_input.text())
+        else:
+            self.update_simulation()
+
+    def on_view_clicked(self, event):
+        """Detect clicks on planets for selection."""
+        try:
+            # 1. Get click position (Modern PySide6)
+            point = event.position().toPoint()
+            click_x, click_y = point.x(), point.y()
+            
+            # 2. Get projection matrices
+            v = self.view.viewMatrix()
+            w, h = self.view.width(), self.view.height()
+            rect_tuple = (0, 0, w, h)
+            p = self.view.projectionMatrix(rect_tuple, rect_tuple)
+            
+            # Convert to numpy for stable math
+            v_np = np.array(v.copyDataTo()).reshape(4, 4)
+            p_np = np.array(p.copyDataTo()).reshape(4, 4)
+            mvp_np = p_np @ v_np # Matrix multiply
+            
+            best_body = None
+            min_dist = 40 # Pixels threshold
+
+            for key, sphere in self.body_spheres.items():
+                pos_3d = sphere.transform().map(QtGui.QVector3D(0,0,0))
+                p3d = np.array([pos_3d.x(), pos_3d.y(), pos_3d.z(), 1.0])
+                
+                # Project: clip_pos = mvp * p3d
+                clip_pos = mvp_np @ p3d
+                
+                # clip_pos[3] is W
+                if clip_pos[3] > 0:
+                    ndc_x = clip_pos[0] / clip_pos[3]
+                    ndc_y = clip_pos[1] / clip_pos[3]
+                    
+                    screen_x = (ndc_x + 1.0) * w / 2.0
+                    screen_y = (1.0 - ndc_y) * h / 2.0
+                    
+                    dist = np.sqrt((screen_x - click_x)**2 + (screen_y - click_y)**2)
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_body = key
+            
+            # Toggle selection
+            new_selection = None if best_body == self.selected_body else best_body
+            self.highlight_body(new_selection)
+        except Exception as e:
+            print(f"Click Selection Error: {e}")
+
+    def highlight_body(self, key):
+        """Highlight a specific planet's orbital path and dim others."""
+        self.selected_body = key
+        
+        for b_key, funnel in self.funnel_paths.items():
+            data = PLANET_DATA[b_key]
+            
+            if key is None:
+                # Reset to normal opacities
+                if funnel: funnel.setData(color=(*data['color'][:3], 0.3), width=1.0)
+            elif b_key == key:
+                # Highlight selection (thicker and brighter)
+                if funnel: funnel.setData(color=(*data['color'][:3], 0.8), width=2.0)
+            else:
+                # Dim other layers
+                if funnel: funnel.setData(color=(*data['color'][:3], 0.05), width=0.5)
+        
+        self.update_hud()
+
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'controls'):
+            self.controls.setGeometry(self.width() - 270, 20, 250, 380)
+
+    def on_calculate_clicked(self):
+        """Handle button click to update simulation time."""
+        date_text = self.date_input.text().strip()
+        self.update_simulation(date_text)
+
+    def update_simulation(self, time_input):
+        """Primary engine update for a new date."""
+        try:
+            # 1. Update Data
+            self.setup_data(time_input)
+            
+            # 2. Update Grid
+            scale = 10.0
+            grid_size = 500
+            grid_res = 500
+            x = np.linspace(-grid_size, grid_size, grid_res)
+            y = np.linspace(-grid_size, grid_size, grid_res)
+            X, Y = np.meshgrid(x, y, indexing='ij')
+            Z = np.zeros_like(X)
+
+            for key, pos_au in self.bodies_pos.items():
+                if key not in PLANET_DATA: continue
+                vx, vy = pos_au[0]*scale, pos_au[1]*scale
+                dist_sq = (X - vx)**2 + (Y - vy)**2
+                data = PLANET_DATA[key]
+                if not getattr(self, 'flat_mode', False):
+                    Z -= data['mass_factor'] * np.exp(-dist_sq / (2 * data['well_spread']**2))
+
+            self.grid.setData(z=Z)
+
+            # 3. Update Bodies & Orbits
+            # Clear old funnel paths first
+            for path in list(self.funnel_paths.values()):
+                self.view.removeItem(path)
+            self.funnel_paths.clear()
+
+            for key, pos_au in self.bodies_pos.items():
+                if key not in PLANET_DATA: continue
+                
+                data = PLANET_DATA[key]
+                vx, vy = pos_au[0]*scale, pos_au[1]*scale
+                
+                # Recalculate vz
+                vz = 0
+                if not getattr(self, 'flat_mode', False):
+                    for b_key, b_pos in self.bodies_pos.items():
+                        if b_key not in PLANET_DATA: continue
+                        b_data = PLANET_DATA[b_key]
+                        bdx, bdy = vx - b_pos[0]*scale, vy - b_pos[1]*scale
+                        dist_sq_b = bdx**2 + bdy**2
+                        vz -= b_data['mass_factor'] * np.exp(-dist_sq_b / (2 * b_data['well_spread']**2))
+                
+                self.body_well_pos[key] = (vx, vy, vz)
+
+                # Update physical sphere
+                if key in self.body_spheres:
+                    self.body_spheres[key].resetTransform()
+                    self.body_spheres[key].translate(vx, vy, vz)
+
+                # Re-draw Funnel Orbits
+                if key != 'sun':
+                    r_au = np.linalg.norm(pos_au)
+                    r_scaled = r_au * scale
+                    theta = np.linspace(0, 2*np.pi, 200)
+                    px, py = r_scaled * np.cos(theta), r_scaled * np.sin(theta)
+                    
+                    pz_funnel = np.zeros_like(theta)
+                    for b_key, b_pos in self.bodies_pos.items():
+                        if b_key not in PLANET_DATA: continue
+                        b_data = PLANET_DATA[b_key]
+                        bx, by = b_pos[0]*scale, b_pos[1]*scale
+                        d_sq = (px - bx)**2 + (py - by)**2
+                        pz_funnel -= b_data['mass_factor'] * np.exp(-d_sq / (2 * b_data['well_spread']**2))
+                    
+                    funnel = gl.GLLinePlotItem(pos=np.stack([px, py, pz_funnel], axis=1),
+                                             color=(*data['color'][:3], 0.3), width=1.0, antialias=True)
+                    self.view.addItem(funnel)
+                    self.funnel_paths[key] = funnel
+
+            self.highlight_body(self.selected_body)
+            self.update_hud()
+            
+        except Exception as e:
+            print(f"Simulation Update Failed: {e}")
+
+    def setup_data(self, time_input=None):
         """Fetch accurate Heliocentric positions from DE441."""
         try:
-            path = 'd:/Vector Infinity/de441.bsp'
+            # Absolute path resolution for reliability in the main app
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            # Navigate up to root if needed, or use the direct D: path if guaranteed
+            path = 'd:/Vector Infinity/de441.bsp' 
+            if not os.path.exists(path):
+                # Fallback to local search if D: is not available
+                path = os.path.join(os.path.dirname(base_dir), 'de441.bsp')
+            
             eph = load(path)
             ts = load.timescale()
-            self.target_time = ts.utc(1919, 5, 29, 13, 30)
+            
+            if time_input is None:
+                self.target_time = ts.utc(1919, 5, 29, 13, 30)
+            elif isinstance(time_input, str):
+                if time_input.lower().startswith('jd'):
+                    jd = float(time_input.split()[1])
+                    self.target_time = ts.tt_jd(jd)
+                else:
+                    parts = [int(p) for p in time_input.replace('-', ' ').split()]
+                    self.target_time = ts.utc(*parts)
             
             sun = eph['sun']
             mapping = {
@@ -70,6 +425,9 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 'mars': 'mars barycenter',
                 'jupiter': 'jupiter barycenter',
                 'saturn': 'saturn barycenter',
+                'uranus': 'uranus barycenter',
+                'neptune': 'neptune barycenter',
+                'pluto': 'pluto barycenter',
             }
 
             for key, sky_name in mapping.items():
@@ -83,17 +441,18 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 
         except Exception as e:
             print(f"Error loading DE441: {e}")
-            self.bodies_pos = {'sun': np.zeros(3), 'earth': np.array([1, 0, 0])}
+            if not self.bodies_pos:
+                self.bodies_pos = {'sun': np.zeros(3), 'earth': np.array([1, 0, 0])}
 
     def setup_scene(self):
         """Initialize the wireframe grid using Gaussian wells for localized dips."""
-        # Scale: 1 AU = 15 units for visual impact
-        scale = 15.0
-        grid_size = 50
-        grid_res = 100 # Higher resolution for smoother grid lines
+        # Scale: 1 AU = 10 units (Covering ~50 AU with 500 units)
+        scale = 10.0
+        grid_size = 500  # +/- 500 units = +/- 50 AU (to include Pluto)
+        grid_res = 500   # Maintain density for the larger area
         x = np.linspace(-grid_size, grid_size, grid_res)
         y = np.linspace(-grid_size, grid_size, grid_res)
-        X, Y = np.meshgrid(x, y)
+        X, Y = np.meshgrid(x, y, indexing='ij')
         Z = np.zeros_like(X)
 
         # Potential Well: Gaussian Z = -A * exp(-d^2 / (2*sigma^2))
@@ -136,44 +495,114 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 dist_sq_b = bdx**2 + bdy**2
                 vz -= b_data['mass_factor'] * np.exp(-dist_sq_b / (2 * b_data['well_spread']**2))
             
-            mesh = gl.MeshData.sphere(rows=15, cols=30, radius=data['radius'])
+            mesh = gl.MeshData.sphere(rows=20, cols=40, radius=data['radius'])
             sphere = gl.GLMeshItem(meshdata=mesh, smooth=True, color=data['color'], shader='shaded')
             sphere.translate(vx, vy, vz)
             self.view.addItem(sphere)
+            self.body_spheres[key] = sphere 
+            self.body_well_pos[key] = (vx, vy, vz) 
 
-        # Camera
-        self.view.setCameraPosition(distance=140, elevation=30, azimuth=-45)
+            # 3. Add Orbital Path (Funnel)
+            if key != 'sun':
+                r_au = np.linalg.norm(pos_au)
+                r_scaled = r_au * scale
+                theta = np.linspace(0, 2*np.pi, 200)
+                path_x = r_scaled * np.cos(theta)
+                path_y = r_scaled * np.sin(theta)
+                
+                # Funnel Path (Surface Projected Ring)
+                path_z_funnel = np.zeros_like(theta)
+                for b_key, b_pos in self.bodies_pos.items():
+                    if b_key not in PLANET_DATA: continue
+                    b_data = PLANET_DATA[b_key]
+                    bx, by = b_pos[0]*scale, b_pos[1]*scale
+                    dist_sq = (path_x - bx)**2 + (path_y - by)**2
+                    path_z_funnel -= b_data['mass_factor'] * np.exp(-dist_sq / (2 * b_data['well_spread']**2))
+
+                orbit_path_funnel = gl.GLLinePlotItem(
+                    pos=np.stack([path_x, path_y, path_z_funnel], axis=1),
+                    color=(*data['color'][:3], 0.3), 
+                    width=1.0,
+                    antialias=True
+                )
+                self.view.addItem(orbit_path_funnel)
+                self.funnel_paths[key] = orbit_path_funnel
+
+        self.view.setCameraPosition(distance=800, elevation=45, azimuth=-45)
+
+    def setup_labels(self):
+        """Create floating labels with arrows for each layer."""
+        for key in self.bodies_pos.keys():
+            if key not in PLANET_DATA: continue
+            
+            # 1. Physical Bottom Labels (↓)
+            lbl_phys = QtWidgets.QLabel(f"{key.upper()}<br>↓", self.view)
+            lbl_phys.setAlignment(QtCore.Qt.AlignCenter)
+            # Enhanced Visibility: Larger font (14px), Bold
+            color = self.get_planet_html_color(key)
+            # Removed text-shadow (not supported in simple QLabel CSS)
+            lbl_phys.setStyleSheet(f"color: {color}; font-family: 'Consolas'; font-size: 14px; font-weight: 900; background: transparent; padding-bottom: 5px;")
+            lbl_phys.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+            lbl_phys.show()
+            self.body_labels[key] = lbl_phys
+
+    def update_label_positions(self):
+        """Project 3D world coordinates to 2D screen coordinates for both layers."""
+        try:
+            v = self.view.viewMatrix()
+            w_view, h_view = self.view.width(), self.view.height()
+            rect_tuple = (0, 0, w_view, h_view)
+            p = self.view.projectionMatrix(rect_tuple, rect_tuple)
+            
+            v_np = np.array(v.copyDataTo()).reshape(4, 4)
+            p_np = np.array(p.copyDataTo()).reshape(4, 4)
+            mvp_np = p_np @ v_np
+
+            for key, data in PLANET_DATA.items():
+                if key not in self.bodies_pos: continue
+                
+                # Project labels to their well positions
+                if key in self.body_labels and key in self.body_well_pos:
+                    vx, vy, vz = self.body_well_pos[key]
+                    p3d_phys = np.array([vx, vy, vz, 1.0])
+                    cp_phys = mvp_np @ p3d_phys
+                    
+                    if cp_phys[3] > 0:
+                        sx = (cp_phys[0]/cp_phys[3] + 1.0) * w_view / 2.0
+                        sy = (1.0 - cp_phys[1]/cp_phys[3]) * h_view / 2.0
+                        lw, lh = self.body_labels[key].width(), self.body_labels[key].height()
+                        # Position name ABOVE the arrow for top labels
+                        self.body_labels[key].move(int(sx - lw/2), int(sy - lh - 15))
+                        self.body_labels[key].show()
+                    else:
+                        self.body_labels[key].hide()
+                elif key in self.body_labels:
+                    self.body_labels[key].hide()
+                    
+        except Exception:
+            pass
 
         # Add a coordinate system reference (Opt)
         # axis = gl.GLAxisItem()
         # self.view.addItem(axis)
 
-        # Camera
-        self.view.setCameraPosition(distance=120, elevation=35, azimuth=-45)
-
     def update_hud(self):
         if self.target_time is not None:
             dt = self.target_time.utc_datetime()
             date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
-        else:
-            date_str = "Static / Unknown"
-
-        hud_text = f"<b style='color: #ffffff; font-size: 16pt;'>SPACETIME FABRIC (DE441)</b><br>"
-        hud_text += f"<span style='color: #00aaaa; font-size: 10pt;'>HISTORICAL EPOCH: MAY 1919</span><br>"
-        hud_text += f"<hr color='#00aaaa'>"
-        hud_text += f"<b>TIME:</b> <span style='color: #00ff00;'>{date_str}</span><br><br>"
-        hud_text += "<b>HELIOCENTRIC COORDINATES (AU):</b><br>"
-        
-        # Sort by distance from Sun
-        sorted_keys = sorted(self.bodies_pos.keys(), key=lambda k: np.linalg.norm(self.bodies_pos[k]))
-        for key in sorted_keys:
-            if key == 'sun': continue
-            pos = self.bodies_pos[key]
-            color = self.get_planet_html_color(key)
-            # Standard Skyfield format: [x, y, z] in AU
-            hud_text += f"• <span style='color: {color};'>{key.capitalize():<9}:</span> {pos[0]:>7.4f}, {pos[1]:>7.4f}<br>"
+            jd_str = f"JD {self.target_time.tt:.4f}"
             
-        self.label.setText(hud_text)
+            hud_text = f"""
+<span style='color: #00ffff; font-size: 16px; font-weight: bold;'>VECTOR INFINITY - SOLAR SCAN</span><br>
+<span style='color: #aaaaaa;'>------------------------------------------</span><br>
+<b>TARGET DATE:</b> {date_str}<br>
+<b>JULIAN DATE:</b> {jd_str}<br>
+<br>
+<b>EPHEMERIS:</b> JPL DE441<br>
+<b>GEOMETRY:</b> ST (PHYSICAL MESH)<br>
+<b>SELECTED:</b> <span style='color: #00ff00;'>{self.selected_body.upper() if self.selected_body else 'NONE'}</span>
+"""
+            self.label.setText(hud_text)
 
     def get_planet_html_color(self, key):
         if key not in PLANET_DATA: return "#ffffff"
@@ -181,15 +610,19 @@ class OrbitalDynamics(QtWidgets.QWidget):
         return f"rgb({int(c[0]*255)}, {int(c[1]*255)}, {int(c[2]*255)})"
 
     def on_show(self):
-        """Standard lifecycle hook"""
-        pass
+        """Start simulation updates when view becomes active."""
+        if hasattr(self, 'label_timer'):
+            self.label_timer.start(30)
+        print("[OrbitalDynamics] Scan Active (Timer Started)")
 
     def on_hide(self):
-        """Standard lifecycle hook"""
-        pass
+        """Stop simulation updates to save resources when backgrounded."""
+        if hasattr(self, 'label_timer'):
+            self.label_timer.stop()
+        print("[OrbitalDynamics] Scan Paused (Timer Stopped)")
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
-    window = SolarSystemSpacetime()
+    window = OrbitalDynamics()
     window.show()
     sys.exit(app.exec())

@@ -131,6 +131,7 @@ StelSkyDrawer.setBortleScale({light_pollution});
 GridLinesMgr.setFlagAzimuthalGrid({str(grid).lower()});
 core.output(JSON.stringify({{status: "Environment Updated"}}));
 """
+    def generate_visibility_scan_script(self, targets):
         """
         Generates a JS script to scan visibility for a list of targets over the next 12 hours.
         """
@@ -195,6 +196,32 @@ var resultList = [];
 for (var key in report) {{
     resultList.push(report[key]);
 }}
-
 core.output(JSON.stringify(resultList));
+"""
+
+    def generate_jump_script(self, jd: float, target: str = "Sun", fov: float = 40.0) -> str:
+        """
+        Generates a script to jump to a specific Julian Date and focus on an object.
+        """
+        return f"""
+var jd = {jd};
+var target = "{target}";
+var fov = {fov};
+
+// 1. Set Time
+core.setJDay(jd);
+
+// 2. Select & Track Object
+try {{
+    core.selectObjectByName(target, true);
+    StelMovementMgr.setFlagTracking(true);
+}} catch(e) {{
+    // Fallback if target not found
+}}
+
+// 3. Zoom
+StelMovementMgr.zoomTo(fov, 1);
+
+// 4. Output confirmation
+core.output(JSON.stringify({{status: "Jumped to " + jd, target: target}}));
 """
