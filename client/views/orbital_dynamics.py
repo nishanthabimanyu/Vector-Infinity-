@@ -4,6 +4,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 import pyqtgraph.opengl as gl
 from skyfield.api import load
+import requests
+import json
 
 AU = 1.495978707e11  # m
 
@@ -12,6 +14,7 @@ PLANET_DATA = {
     'mercury': {'color': (0.7, 0.7, 0.7, 1), 'radius': 0.4, 'mass_factor': 1.5, 'well_spread': 4.0},
     'venus': {'color': (0.9, 0.7, 0.4, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
     'earth': {'color': (0.3, 0.5, 1.0, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
+    'moon': {'color': (0.9, 0.9, 0.9, 1), 'radius': 0.2, 'mass_factor': 0.5, 'well_spread': 1.0},
     'mars': {'color': (1, 0.4, 0.4, 1), 'radius': 0.5, 'mass_factor': 2.0, 'well_spread': 2.5},
     'jupiter': {'color': (0.8, 0.6, 0.5, 1), 'radius': 1.2, 'mass_factor': 4.5, 'well_spread': 5.0},
     'saturn': {'color': (0.9, 0.8, 0.6, 1), 'radius': 1.1, 'mass_factor': 4.0, 'well_spread': 4.5},
@@ -56,6 +59,9 @@ class OrbitalDynamics(QtWidgets.QWidget):
         self.funnel_paths = {} # Surface paths {key: item}
         self.target_time = None
         self.selected_body = None
+        self.is_playing = False # Animation State
+        self.play_speed = 1.0 # Days per frame
+        self.live_link = False # Stellarium Live Sync
         
         self.setup_data()
         self.setup_controls() 
@@ -66,6 +72,7 @@ class OrbitalDynamics(QtWidgets.QWidget):
         # Update labels on a timer (Managed by on_show/on_hide)
         self.label_timer = QtCore.QTimer()
         self.label_timer.timeout.connect(self.update_label_positions)
+        self.label_timer.timeout.connect(self.update_animation) # Hook animation loop
 
         # Connect Mouse Event
         self.view.mousePressEvent = self.on_view_clicked
@@ -193,8 +200,23 @@ class OrbitalDynamics(QtWidgets.QWidget):
             }
         """)
         self.controls_layout.addWidget(self.date_input)
+        
+        # Date Controls
+        date_layout = QtWidgets.QHBoxLayout()
 
-        self.calc_btn = QtWidgets.QPushButton("CALCULATE")
+        self.btn_now = QtWidgets.QPushButton("NOW")
+        self.btn_now.setToolTip("Reset to Current Time")
+        self.btn_now.setStyleSheet("""
+            QPushButton { 
+                background: #e67e22; color: white; font-weight: bold; 
+                border-radius: 3px; padding: 8px; font-family: 'Consolas';
+            }
+            QPushButton:hover { background: #d35400; }
+        """)
+        self.btn_now.clicked.connect(self.set_time_now)
+        date_layout.addWidget(self.btn_now)
+
+        self.calc_btn = QtWidgets.QPushButton("GO TO DATE")
         self.calc_btn.setStyleSheet("""
             QPushButton { 
                 background: #00aaaa; color: black; font-weight: bold; 
@@ -203,8 +225,64 @@ class OrbitalDynamics(QtWidgets.QWidget):
             QPushButton:hover { background: #00ffff; }
         """)
         self.calc_btn.clicked.connect(self.on_calculate_clicked)
-        self.controls_layout.addWidget(self.calc_btn)
+        date_layout.addWidget(self.calc_btn)
         
+        self.controls_layout.addLayout(date_layout)
+
+        # Animation Controls
+        anim_layout = QtWidgets.QHBoxLayout()
+        
+        self.btn_play = QtWidgets.QPushButton("▶ START")
+        self.btn_play.setCheckable(True)
+        self.btn_play.setStyleSheet("""
+            QPushButton { 
+                background: #2ecc71; color: black; font-weight: bold; 
+                border-radius: 3px; padding: 8px; font-family: 'Consolas';
+            }
+            QPushButton:checked { background: #e74c3c; color: white; }
+            QPushButton:hover { background: #27ae60; }
+        """)
+        self.btn_play.toggled.connect(self.toggle_animation)
+        anim_layout.addWidget(self.btn_play)
+        
+        self.speed_input = QtWidgets.QDoubleSpinBox()
+        self.speed_input = QtWidgets.QDoubleSpinBox()
+        self.speed_input.setRange(-36500.0, 36500.0) # Allow Rewind and Fast Forward
+        self.speed_input.setValue(1.0)
+        self.speed_input.setSuffix(" days/fr")
+        self.speed_input.setStyleSheet("""
+            QDoubleSpinBox { 
+                background: #000; color: #00ffff; 
+                border: 1px solid #00aaaa; padding: 5px; font-weight: bold;
+            }
+        """)
+        self.speed_input.valueChanged.connect(self.set_speed)
+        anim_layout.addWidget(self.speed_input)
+        
+        self.controls_layout.addLayout(anim_layout)
+
+        # Stellarium Integration
+        stel_layout = QtWidgets.QHBoxLayout()
+        
+        self.btn_sync = QtWidgets.QPushButton("⟳ SYNC STEL")
+        self.btn_sync.setToolTip("Push current time to Stellarium")
+        self.btn_sync.setStyleSheet("""
+            QPushButton { 
+                background: #16a085; color: white; font-weight: bold; 
+                border-radius: 3px; padding: 8px; font-family: 'Consolas';
+            }
+            QPushButton:hover { background: #1abc9c; }
+        """)
+        self.btn_sync.clicked.connect(self.sync_to_stellarium)
+        stel_layout.addWidget(self.btn_sync)
+
+        self.chk_live = QtWidgets.QCheckBox("LIVE LINK")
+        self.chk_live.setStyleSheet("color: #1abc9c; font-weight: bold;")
+        self.chk_live.toggled.connect(self.toggle_live_link)
+        stel_layout.addWidget(self.chk_live)
+        
+        self.controls_layout.addLayout(stel_layout)
+
         # Position in top-right (Expanded to prevent clipping)
         self.controls.setGeometry(self.width() - 270, 20, 250, 380)
 
@@ -300,6 +378,11 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 if funnel: funnel.setData(color=(*data['color'][:3], 0.05), width=0.5)
         
         self.update_hud()
+        
+        # Stellarium Focus Sync
+        if key and self.isVisible():
+             self.focus_stellarium(key)
+
 
 
     def resizeEvent(self, event):
@@ -321,7 +404,13 @@ class OrbitalDynamics(QtWidgets.QWidget):
             # 2. Update Grid
             scale = 10.0
             grid_size = 500
-            grid_res = 500
+            
+            # Optimization: Lower resolution during animation
+            if self.is_playing:
+                grid_res = 100 # Fast mode
+            else:
+                grid_res = 200 # High quality static
+                
             x = np.linspace(-grid_size, grid_size, grid_res)
             y = np.linspace(-grid_size, grid_size, grid_res)
             X, Y = np.meshgrid(x, y, indexing='ij')
@@ -335,9 +424,20 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 if not getattr(self, 'flat_mode', False):
                     Z -= data['mass_factor'] * np.exp(-dist_sq / (2 * data['well_spread']**2))
 
-            self.grid.setData(z=Z)
+            # Reset data with new resolution
+            # We must update x/y arguments if resolution changes
+            self.grid.setData(x=x, y=y, z=Z)
+
+            # Live Link Sync
+            if self.live_link and self.target_time is not None:
+                self.sync_to_stellarium()
 
             # 3. Update Bodies & Orbits
+            # Clear old funnel paths first
+            for path in list(self.funnel_paths.values()):
+                self.view.removeItem(path)
+            self.funnel_paths.clear()
+
             # Clear old funnel paths first
             for path in list(self.funnel_paths.values()):
                 self.view.removeItem(path)
@@ -422,6 +522,7 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 'mercury': 'mercury barycenter',
                 'venus': 'venus barycenter',
                 'earth': 'earth',
+                'moon': 'moon',
                 'mars': 'mars barycenter',
                 'jupiter': 'jupiter barycenter',
                 'saturn': 'saturn barycenter',
@@ -438,6 +539,21 @@ class OrbitalDynamics(QtWidgets.QWidget):
                     astrometric = sun.at(self.target_time).observe(body)
                     pos = astrometric.position.au
                     self.bodies_pos[key] = pos
+            
+            # VISUAL HACK: Exaggerate Moon distance so it's not inside Earth
+            # Earth Radius (0.6) + Moon Radius (0.2) = 0.8 units approx.
+            # Scale 10.0 -> 0.08 AU. We set min dist to 0.15 AU (1.5 units) to be safe.
+            if 'earth' in self.bodies_pos and 'moon' in self.bodies_pos:
+                 e_pos = self.bodies_pos['earth']
+                 m_pos = self.bodies_pos['moon']
+                 d_vec = m_pos - e_pos
+                 dist = np.linalg.norm(d_vec)
+                 
+                 min_dist_au = 0.15 # Minimum visual separation
+                 if dist < min_dist_au:
+                     # Normalize and scale
+                     d_vec_norm = d_vec / dist
+                     self.bodies_pos['moon'] = e_pos + (d_vec_norm * min_dist_au)
                 
         except Exception as e:
             print(f"Error loading DE441: {e}")
@@ -496,7 +612,7 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 vz -= b_data['mass_factor'] * np.exp(-dist_sq_b / (2 * b_data['well_spread']**2))
             
             mesh = gl.MeshData.sphere(rows=20, cols=40, radius=data['radius'])
-            sphere = gl.GLMeshItem(meshdata=mesh, smooth=True, color=data['color'], shader='shaded')
+            sphere = gl.GLMeshItem(meshdata=mesh, smooth=True, color=data['color'], shader='shaded', glOptions='additive')
             sphere.translate(vx, vy, vz)
             self.view.addItem(sphere)
             self.body_spheres[key] = sphere 
@@ -604,15 +720,73 @@ class OrbitalDynamics(QtWidgets.QWidget):
 """
             self.label.setText(hud_text)
 
+    def toggle_animation(self, playing):
+        self.is_playing = playing
+        if playing:
+            self.btn_play.setText("❚❚ PAUSE")
+        else:
+            self.btn_play.setText("▶ START")
+
+    def set_speed(self, val):
+        self.play_speed = val
+
+    def set_time_now(self):
+        """Reset simulation to current system time."""
+        now = QtCore.QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
+        self.date_input.setText(now)
+        self.update_simulation(now)
+        if self.live_link:
+            self.sync_to_stellarium()
+
+    def update_animation(self):
+        """Called by timer when playing."""
+        if self.is_playing and self.target_time is not None:
+            # Advance time by X days (in Julian Date)
+            current_jd = self.target_time.tt
+            new_jd = current_jd + self.play_speed
+            
+            # Create new time string (JD format)
+            time_str = f"JD {new_jd}"
+            
+            # Update Simulation without resetting View/Cam
+            self.update_simulation(time_str)
+
     def get_planet_html_color(self, key):
         if key not in PLANET_DATA: return "#ffffff"
         c = PLANET_DATA[key]['color']
         return f"rgb({int(c[0]*255)}, {int(c[1]*255)}, {int(c[2]*255)})"
 
+    def toggle_live_link(self, checked):
+        self.live_link = checked
+        if checked:
+            self.sync_to_stellarium()
+
+    def sync_to_stellarium(self):
+        """Push current JD time to Stellarium API."""
+        if self.target_time is None: return
+        try:
+            jd = self.target_time.tt
+            # Stellarium API: POST /api/main/time
+            requests.post("http://localhost:8090/api/main/time", data={'time': jd, 'timerate': 0}, timeout=0.2)
+        except Exception:
+            pass # Fail silently if Stellarium is closed
+
+    def focus_stellarium(self, name):
+        """Focus on the selected body in Stellarium."""
+        try:
+            # Map internal names to Stellarium names if needed
+            target = name.title()
+            if target == "Sun": target = "Sun"
+            
+            # Stellarium API: POST /api/main/focus
+            requests.post("http://localhost:8090/api/main/focus", data={'target': target}, timeout=0.2)
+        except Exception:
+            pass
+
     def on_show(self):
         """Start simulation updates when view becomes active."""
         if hasattr(self, 'label_timer'):
-            self.label_timer.start(30)
+            self.label_timer.start(50) # 20 FPS (Reduced from 30ms)
         print("[OrbitalDynamics] Scan Active (Timer Started)")
 
     def on_hide(self):

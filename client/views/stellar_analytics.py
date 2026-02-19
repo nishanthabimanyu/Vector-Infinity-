@@ -2,11 +2,17 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QFrame, QLineEdit, QComboBox, QCheckBox, 
                                QTableWidget, QTableWidgetItem, QHeaderView, QTextEdit, 
                                QSplitter, QScrollArea, QProgressBar, QSizePolicy, QGroupBox, QGridLayout, QTabWidget,
-                               QGraphicsEllipseItem, QStackedWidget)
+                               QGraphicsEllipseItem, QStackedWidget, QApplication)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QThread
 from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtGui import QColor, QFont, QIcon, QAction
+from PySide6.QtWidgets import QMenu, QFileDialog
 import requests
 import json
+import csv
+import pyqtgraph.exporters
+import pyqtgraph as pg
+import numpy as np
 from client.ui.chat_widgets import ChatInterface
 
 class ChartContainer(QFrame):
@@ -63,8 +69,16 @@ class ChartContainer(QFrame):
         """)
         self.btn_max.clicked.connect(self.toggle_maximize)
         
+        self.btn_export = QPushButton("📷") # Export Symbol
+        self.btn_export.setCursor(Qt.PointingHandCursor)
+        self.btn_export.setFixedSize(24, 24)
+        self.btn_export.setToolTip("Export Chart")
+        self.btn_export.setStyleSheet(self.btn_max.styleSheet())
+        self.btn_export.clicked.connect(self.show_export_menu)
+
         hl.addWidget(lbl_title)
         hl.addStretch()
+        hl.addWidget(self.btn_export)
         hl.addWidget(self.btn_max)
         
         layout.addWidget(header)
@@ -88,6 +102,45 @@ class ChartContainer(QFrame):
             self.btn_max.setToolTip("Maximize Chart")
             
         self.maximize_requested.emit(self, self.is_maximized)
+
+    def show_export_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #161920; color: #c5c6c7; border: 1px solid #2a2e38; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background-color: #1f4068; color: #ffffff; }
+        """)
+        
+        act_csv = QAction("📄 Export Data (CSV)", self)
+        act_csv.triggered.connect(self.export_csv)
+        menu.addAction(act_csv)
+        
+        act_img = QAction("🖼️ Save Snapshot (PNG)", self)
+        act_img.triggered.connect(self.export_image)
+        menu.addAction(act_img)
+        
+        menu.exec(self.btn_export.mapToGlobal(self.btn_export.rect().bottomLeft()))
+
+    def export_image(self):
+        try:
+            # 1. Ask for filename
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Snapshot", "", "PNG Images (*.png)")
+            if not filename: return
+            
+            # 2. Export
+            exporter = pyqtgraph.exporters.ImageExporter(self.plot_widget.plotItem)
+            exporter.export(filename)
+        except Exception as e:
+            print(f"Export Image Failed: {e}")
+
+    def export_csv(self):
+        try:
+            if hasattr(self.plot_widget, 'export_csv'):
+                self.plot_widget.export_csv()
+            else:
+                print("Widget does not support CSV export")
+        except Exception as e:
+            print(f"Export CSV Failed: {e}")
 
 class TelemetryCard(QFrame):
     def __init__(self, name, parent=None):
@@ -421,6 +474,37 @@ class SkyPathAnalyzer(pg.PlotWidget):
                 # print(f"SkyPath Error {name}: {e}")
                 pass
 
+    def export_csv(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Sky Path Data", "", "CSV Files (*.csv)")
+        if not filename: return
+        
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Object", "Azimuth (deg)", "Altitude (deg)"])
+                
+                # We don't store history here, so we export current pos if available?
+                # Or re-calculate the path points?
+                # Let's export the computed path points for each object
+                
+                for name, curve in self.paths.items():
+                    x_data, y_data = curve.getData()
+                    if x_data is None: continue
+                    
+                    # Inverse projection is hard (X/Y -> Az/Alt)
+                    # Instead, let's just dump the X/Y polar coords for now or skip?
+                    # Better: Export the logic points we calculated
+                    
+                    # Re-calculating is safest if we didn't store them.
+                    # But for now, let's just dump X,Y (Polar Projection)
+                    writer.writerow([f"# PATH DATA FOR {name} (Polar Coordinates)"])
+                    writer.writerow(["X", "Y"])
+                    for x, y in zip(x_data, y_data):
+                        writer.writerow([x, y])
+                        
+        except Exception as e:
+            print(f"CSV Save Error: {e}")
+
 class VisibilityCurve(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -523,76 +607,482 @@ class VisibilityCurve(pg.PlotWidget):
                 # print(f"Vis Error {name}: {e}")
                 pass
 
-class AtmosphereMonitor(pg.PlotWidget):
+    def export_csv(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Visibility Forecast", "", "CSV Files (*.csv)")
+        if not filename: return
+        
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                header = ["Time Offset (h)"]
+                data_cols = []
+                names = []
+                
+                # Collect valid curves
+                xs = None
+                for name, curve in self.curves.items():
+                    x, y = curve.getData()
+                    if x is not None and len(x) > 0:
+                        if xs is None: xs = x
+                        header.append(f"{name} Altitude")
+                        data_cols.append(y)
+                        names.append(name)
+                
+                writer.writerow(header)
+                if xs is not None:
+                    for i in range(len(xs)):
+                        row = [xs[i]]
+                        for col in data_cols:
+                            row.append(col[i] if i < len(col) else "")
+                        writer.writerow(row)
+        except Exception as e:
+            print(f"CSV Save Error: {e}")
+
+class RetrogradePathTracker(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("ATMOSPHERE MONITOR", color='#e74c3c', size='10pt')
+        self.setTitle("RETROGRADE TRACKER (LIVE)", color='#e74c3c', size='10pt')
         self.showGrid(x=True, y=True, alpha=0.3)
-        self.setLabel('left', 'Airmass / Mag', color='#8b949e')
-        self.addLegend()
+        self.setLabel('left', 'Declination', units='deg')
+        self.setLabel('bottom', 'Right Ascension', units='h')
+        self.invertX(True) # Sky charts usually have East (higher RA) to the Left
+        self.addLegend(offset=(5, 5))
         
-        self.curve_air = self.plot(name='Airmass', pen=pg.mkPen('#e74c3c', width=2))
-        self.curve_mag = self.plot(name='Mag (Ext)', pen=pg.mkPen('#f1c40f', width=2))
+        self.curve = self.plot(pen=pg.mkPen('#e74c3c', width=2), symbol='o', symbolSize=3, symbolBrush='#e74c3c', name='Trace')
+        self.current_pos = self.plot(pen=None, symbol='+', symbolSize=15, symbolBrush='#ffffff', name='Current')
         
-        self.data_air = np.zeros(100)
-        self.data_mag = np.zeros(100)
-        self.ptr = 0
+        self.ra_history = []
+        self.dec_history = []
+        self.last_target = None
+        self.polar_mode = False 
+        self.polar_grid_items = []
 
-    def update_plot(self, airmass, mag):
-        self.data_air[:-1] = self.data_air[1:]
-        self.data_air[-1] = airmass
+        # Context Menu
+        self.plotItem.vb.menu = None # Disable default menu to avoid confusion? Or just add to it?
         
-        self.data_mag[:-1] = self.data_mag[1:]
-        self.data_mag[-1] = mag
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
         
-        self.curve_air.setData(self.data_air)
-        self.curve_mag.setData(self.data_mag)
+        act_view = QAction("Switch to Polar View" if not self.polar_mode else "Switch to Cartesian View", self)
+        act_view.triggered.connect(self.toggle_view)
+        menu.addAction(act_view)
+        
+        menu.addSeparator()
+        
+        act_csv = QAction("Pages Export Data (CSV)", self)
+        act_csv.triggered.connect(self.export_csv)
+        menu.addAction(act_csv)
+        
+        menu.exec(event.globalPos())
 
-class TelemetryGraph(pg.PlotWidget):
+    def toggle_view(self):
+        self.polar_mode = not self.polar_mode
+        self.refresh_view_mode()
+        # Re-plot existing data
+        if self.ra_history:
+             self.update_plot_data()
+
+    def refresh_view_mode(self):
+        if self.polar_mode:
+            self.setTitle("RETROGRADE TRACKER (POLAR)", color='#e74c3c', size='10pt')
+            self.showGrid(x=False, y=False)
+            self.setLabel('bottom', 'Projected RA/Dec', units='')
+            self.setLabel('left', '', units='')
+            # Draw Polar Grid
+            self.draw_polar_grid()
+        else:
+            self.setTitle("RETROGRADE TRACKER (CARTESIAN)", color='#e74c3c', size='10pt')
+            self.showGrid(x=True, y=True, alpha=0.3)
+            self.setLabel('bottom', 'Right Ascension', units='h')
+            self.setLabel('left', 'Declination', units='deg')
+            self.invertX(True)
+            self.remove_polar_grid()
+
+    def draw_polar_grid(self):
+        self.remove_polar_grid()
+        # Circles for Dec (90, 60, 30, 0, -30)
+        for dec in [60, 30, 0, -30]:
+            r = 90 - dec
+            circle = QGraphicsEllipseItem(-r, -r, r*2, r*2)
+            circle.setPen(pg.mkPen(color='#1f4068', width=1, style=Qt.DashLine))
+            self.addItem(circle)
+            self.polar_grid_items.append(circle)
+            
+        # Lines for RA (0h, 6h, 12h, 18h)
+        for h in range(0, 24, 2):
+            angle_rad = np.radians(h * 15)
+            # Line from center to R=120 (Dec -30)
+            r_max = 120
+            x = r_max * np.sin(angle_rad) # RA 0 is Top? No, conventional polar: 0 is Right.
+            y = r_max * np.cos(angle_rad) 
+            
+            line = pg.PlotCurveItem([0, x], [0, y], pen=pg.mkPen(color='#1f4068', width=1))
+            self.addItem(line)
+            self.polar_grid_items.append(line)
+
+    def remove_polar_grid(self):
+        for item in self.polar_grid_items:
+            self.removeItem(item)
+        self.polar_grid_items = []
+
+    def update_plot(self, ra, dec, name):
+        """
+        ra: Right Ascension in DEGREES (0-360)
+        dec: Declination in DEGREES
+        name: Name of the object
+        """
+        # Convert RA to Hours (0-24)
+        ra_h = ra / 15.0
+        
+        if name != self.last_target:
+            self.ra_history = []
+            self.dec_history = []
+            self.last_target = name
+            self.setTitle(f"RETROGRADE: {name.upper()}", color='#e74c3c', size='10pt')
+            
+        if not self.polar_mode:
+             if self.ra_history:
+                last_ra = self.ra_history[-1]
+                if not np.isnan(last_ra):
+                    if abs(ra_h - last_ra) > 12.0:
+                         self.ra_history.append(np.nan)
+                         self.dec_history.append(np.nan)
+        
+        self.ra_history.append(ra_h)
+        self.dec_history.append(dec)
+        
+        # Limit history
+        if len(self.ra_history) > 5000:
+             self.ra_history.pop(0)
+             self.dec_history.pop(0)
+
+        self.update_plot_data()
+
+    def update_plot_data(self):
+        if not self.ra_history: return
+        
+        if self.polar_mode:
+            # Project to Polar
+            # R = 90 - Dec
+            # Theta = RA (deg)
+            # X = R * cos(theta), Y = R * sin(theta)
+            
+            # Vectorized conversion
+            ras = np.array(self.ra_history) * 15.0 # deg
+            decs = np.array(self.dec_history)
+            
+            # Filter NaNs
+            valid = ~np.isnan(ras)
+            ras = ras[valid]
+            decs = decs[valid]
+            
+            rs = 90.0 - decs
+            thetas = np.radians(ras) # Math angle (0 is East/Right)
+            
+            xs = rs * np.cos(thetas)
+            ys = rs * np.sin(thetas)
+            
+            self.curve.setData(xs, ys)
+            
+            # Current Pos
+            if len(xs) > 0:
+                self.current_pos.setData([xs[-1]], [ys[-1]])
+                
+        else:
+             self.curve.setData(self.ra_history, self.dec_history)
+             # Current
+             if self.ra_history:
+                 self.current_pos.setData([self.ra_history[-1]], [self.dec_history[-1]])
+
+    def export_csv(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Retrograde Trace", "", "CSV Files (*.csv)")
+        if not filename: return
+        
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Right Ascension (h)", "Declination (deg)"])
+                
+                for r, d in zip(self.ra_history, self.dec_history):
+                    if np.isnan(r) or np.isnan(d): continue
+                    writer.writerow([r, d])
+        except Exception as e:
+            print(f"CSV Save Error: {e}")
+
+class HilbertSpaceVisualizer(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackground('#0b0c10')
-        self.setTitle("LIVE TELEMETRY: ALTITUDE", color='#4facfe', size='10pt')
-        self.getAxis('left').setPen('#2a2e38')
-        self.getAxis('bottom').setPen('#2a2e38')
-        self.showGrid(x=True, y=True, alpha=0.3)
-        self.setLabel('left', 'Altitude (deg)', color='#8b949e')
-        self.setLabel('bottom', 'Time (s)', color='#8b949e')
-        self.addLegend(offset=(10, 10))
-        self.curves = {} # {name: plot_data_item}
-        self.pen_colors = ['#4facfe', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#ffffff']
-        self.color_idx = 0
+        self.setTitle("HILBERT SPACE CONNECTIVITY", color='#4facfe', size='10pt')
+        self.showGrid(x=False, y=False)
+        self.setLabel('bottom', 'Polar Projection (RA/Dec)', units='')
+        self.setLabel('left', '', units='')
+        self.addLegend(offset=(5, 5))
+        
+        self.view_mode = 'POLAR' # 'POLAR' or 'MISSION'
+        
+        # Grid items container
+        self.grid_items = []
+        self.draw_grid()
+        
+        # Container for plot items (points and lines)
+        self.scatter = pg.ScatterPlotItem(size=15, pen=pg.mkPen(None), brush=pg.mkBrush(255, 255, 255, 200), symbol='o')
+        self.addItem(self.scatter)
+        self.connection_lines = []
+        
+        self.active_data = [] # Stores current list of objects for export
 
-    def update_plot(self, graph_data):
-        # graph_data: {name: {'time': [], 'val': []}}
+        # Mission radii (Visualization only)
+        self.mission_radii = {
+            'Sun': 0, 'Mercury': 25, 'Venus': 45, 'Earth': 70, 'Moon': 70, 
+            'Mars': 100, 'Jupiter': 150, 'Saturn': 200, 'Uranus': 250, 'Neptune': 300, 'Pluto': 350
+        }
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
         
-        # 1. Remove curves for objects not in data
-        current_names = set(graph_data.keys())
-        existing_names = set(self.curves.keys())
+        polar_action = QAction("Switch to Observer View (Polar)", self)
+        polar_action.setCheckable(True)
+        polar_action.setChecked(self.view_mode == 'POLAR')
+        polar_action.triggered.connect(lambda: self.set_view_mode('POLAR'))
         
-        for name in existing_names - current_names:
-            self.removeItem(self.curves[name])
-            del self.curves[name]
-            
-        # 2. Update/Add curves
-        for i, (name, data) in enumerate(graph_data.items()):
-            t = data['time']
-            v = data['val']
-            
-            if name not in self.curves:
-                color = self.pen_colors[self.color_idx % len(self.pen_colors)]
-                self.color_idx += 1
-                pen = pg.mkPen(color=color, width=2)
-                # Add symbol='o' to make points visible even if lines are flat/sparse
-                self.curves[name] = self.plot(t, v, name=name, pen=pen, symbol='o', symbolSize=4, symbolBrush=color)
-            
-            self.curves[name].setData(t, v)
+        mission_action = QAction("Switch to Mission View (Heliocentric)", self)
+        mission_action.setCheckable(True)
+        mission_action.setChecked(self.view_mode == 'MISSION')
+        mission_action.triggered.connect(lambda: self.set_view_mode('MISSION'))
         
-        # Force auto-range occasionally or on first point? 
-        # Generally default is fine, but let's ensure it.
-        self.enableAutoRange('x', True)
-        self.enableAutoRange('y', True)
+        menu.addAction(polar_action)
+        menu.addAction(mission_action)
+        menu.addSeparator()
+        
+        export_action = QAction("Export Data (CSV)", self)
+        export_action.triggered.connect(self.export_csv)
+        menu.addAction(export_action)
+        
+        menu.exec_(event.globalPos())
+
+    def set_view_mode(self, mode):
+        if self.view_mode != mode:
+            self.view_mode = mode
+            if mode == 'MISSION':
+                self.setTitle("MISSION TRAJECTORY (HELIOCENTRIC)", color='#f1c40f', size='10pt')
+                self.setLabel('bottom', 'Heliocentric XY (AU Scale)', units='')
+            else:
+                self.setTitle("HILBERT SPACE CONNECTIVITY", color='#4facfe', size='10pt')
+                self.setLabel('bottom', 'Polar Projection (RA/Dec)', units='')
+                
+            self.draw_grid()
+            self.update_plot(self.active_data)
+
+    def draw_grid(self):
+        # Clear old items
+        for item in self.grid_items:
+            self.removeItem(item)
+        self.grid_items = []
+        
+        if self.view_mode == 'POLAR':
+            # Circles for Dec (90, 60, 30, 0, -30)
+            for dec in [60, 30, 0, -30]:
+                r = 90 - dec
+                circle = QGraphicsEllipseItem(-r, -r, r*2, r*2)
+                circle.setPen(pg.mkPen(color='#1f4068', width=1, style=Qt.DashLine))
+                self.addItem(circle)
+                self.grid_items.append(circle)
+            
+            # Lines for RA (0h, 6h, 12h, 18h)
+            for h in range(0, 24, 2):
+                angle_rad = np.radians(h * 15)
+                r_max = 120
+                x = r_max * np.sin(angle_rad)
+                y = r_max * np.cos(angle_rad)
+                line = pg.PlotCurveItem([0, x], [0, y], pen=pg.mkPen(color='#1f4068', width=1))
+                self.addItem(line)
+                self.grid_items.append(line)
+        else:
+            # Heliocentric Orbits
+            for planet, r in self.mission_radii.items():
+                if r == 0: continue
+                circle = QGraphicsEllipseItem(-r, -r, r*2, r*2)
+                circle.setPen(pg.mkPen(color='#2c3e50', width=1))
+                self.addItem(circle)
+                self.grid_items.append(circle)
+
+    def interpolate_geodesic(self, p1, p2, num_points=30):
+        """Observer view shortest path interpolation."""
+        # Convert to Radians
+        ra1, dec1 = np.radians(p1['ra']), np.radians(p1['dec'])
+        ra2, dec2 = np.radians(p2['ra']), np.radians(p2['dec'])
+        
+        v1 = np.array([np.cos(dec1)*np.cos(ra1), np.cos(dec1)*np.sin(ra1), np.sin(dec1)])
+        v2 = np.array([np.cos(dec2)*np.cos(ra2), np.cos(dec2)*np.sin(ra2), np.sin(dec2)])
+        
+        t = np.linspace(0, 1, num_points)
+        path_x, path_y = [], []
+        
+        for i in t:
+            vt = (1-i)*v1 + i*v2
+            norm = np.linalg.norm(vt)
+            if norm == 0: continue
+            vt /= norm
+            
+            dec_int = np.arcsin(vt[2])
+            ra_int = np.arctan2(vt[1], vt[0])
+            
+            ra_deg, dec_deg = np.degrees(ra_int), np.degrees(dec_int)
+            r = 90 - dec_deg
+            theta = np.radians(ra_deg)
+            path_x.append(-r * np.sin(theta))
+            path_y.append(r * np.cos(theta))
+            
+        return path_x, path_y
+
+    def interpolate_mission_path(self, p1, p2, num_points=50):
+        """Heliocentric spiral/arc (Mangalyaan Style)."""
+        r1, t1 = p1['r'], p1['theta']
+        r2, t2 = p2['r'], p2['theta']
+        
+        # Shortest angle diff
+        dt = t2 - t1
+        if dt > np.pi: dt -= 2*np.pi
+        if dt < -np.pi: dt += 2*np.pi
+        
+        t = np.linspace(0, 1, num_points)
+        path_x, path_y = [], []
+        
+        for i in t:
+            # Spiral radius: r(i) = r1 + i*(r2-r1)
+            # Spiral angle: t(i) = t1 + i*dt
+            # Also add a slight "bulge" to make it look like an orbital arc
+            curr_r = r1 + i*(r2-r1)
+            # Add orbital bulge: sin(pi*i)
+            bulge = 0.2 * abs(r2-r1) * np.sin(np.pi * i) 
+            curr_r += bulge
+            
+            curr_t = t1 + i*dt
+            
+            path_x.append(curr_r * np.cos(curr_t))
+            path_y.append(curr_r * np.sin(curr_t))
+            
+        return path_x, path_y
+
+    def update_plot(self, active_items):
+        self.active_data = active_items
+        for line in self.connection_lines:
+            self.removeItem(line)
+        self.connection_lines = []
+        
+        if self.view_mode == 'POLAR':
+            center_spot = {'pos': (0, 0), 'data': 'Earth (Observer)', 'brush': pg.mkBrush('#2ecc71'), 'symbol': 'star', 'size': 20}
+        else:
+            center_spot = {'pos': (0, 0), 'data': 'Sun (System Center)', 'brush': pg.mkBrush('#f1c40f'), 'symbol': 'star', 'size': 25}
+            
+        if not active_items:
+            self.scatter.setData(spots=[center_spot])
+            return
+
+        projected_points = []
+        spots = [center_spot]
+        
+        for item in active_items:
+            name = item.get('name', 'Unknown')
+            ra = item.get('ra', 0)
+            dec = item.get('dec', 0)
+            
+            if self.view_mode == 'POLAR':
+                r = 90 - dec
+                theta = np.radians(ra)
+                x = -r * np.sin(theta)
+                y = r * np.cos(theta)
+                projected_points.append({'x': x, 'y': y, 'name': name, 'ra': ra, 'dec': dec})
+            else:
+                # Mission Mode
+                # Use simplified orbits based on RA as angle and mission_radii as R
+                r = self.mission_radii.get(name, 120)
+                # If name is not in radii (e.g. Moon or Star), try mapping or skip
+                if name == 'Moon': r = 75 # Next to Earth
+                
+                theta = np.radians(ra)
+                x = r * np.cos(theta)
+                y = r * np.sin(theta)
+                projected_points.append({'x': x, 'y': y, 'name': name, 'r': r, 'theta': theta, 'ra': ra, 'dec': dec})
+                
+            spots.append({'pos': (x, y), 'data': name, 'brush': pg.mkBrush(item.get('color', '#4facfe'))})
+
+        self.scatter.setData(spots=spots)
+        
+        # 2. Draw Connections
+        if self.view_mode == 'POLAR':
+            for p in projected_points:
+                line = pg.PlotCurveItem([0, p['x']], [0, p['y']], pen=pg.mkPen(color='#2ecc71', width=1, style=Qt.DashLine))
+                self.addItem(line)
+                self.connection_lines.append(line)
+            
+            import itertools
+            for p1, p2 in itertools.combinations(projected_points, 2):
+                path_x, path_y = self.interpolate_geodesic(p1, p2)
+                line = pg.PlotCurveItem(path_x, path_y, pen=pg.mkPen(color='#2a2e38', width=1))
+                self.addItem(line)
+                self.connection_lines.append(line)
+        else:
+            # Mission View: Connect all to center (Sun) and inter-planet transfer arcs
+            for p in projected_points:
+                # Line to Sun
+                line = pg.PlotCurveItem([0, p['x']], [0, p['y']], pen=pg.mkPen(color='#7f8c8d', width=1, style=Qt.DotLine))
+                self.addItem(line)
+                self.connection_lines.append(line)
+                
+            import itertools
+            for p1, p2 in itertools.combinations(projected_points, 2):
+                path_x, path_y = self.interpolate_mission_path(p1, p2)
+                # Mangalyaan Style: Gradient or Glow? Let's use a distinct color
+                line = pg.PlotCurveItem(path_x, path_y, pen=pg.mkPen(color='#e67e22', width=1.5))
+                self.addItem(line)
+                self.connection_lines.append(line)
+
+        # Update Title Separation if exactly 2
+        if len(projected_points) == 2:
+            p1, p2 = projected_points[0], projected_points[1]
+            d1_rad, d2_rad = np.radians(p1['dec']), np.radians(p2['dec'])
+            ra_diff_rad = np.radians(p1['ra'] - p2['ra'])
+            cos_sep = np.sin(d1_rad)*np.sin(d2_rad) + np.cos(d1_rad)*np.cos(d2_rad)*np.cos(ra_diff_rad)
+            sep_deg = np.degrees(np.arccos(max(min(cos_sep, 1.0), -1.0)))
+            suffix = f" | SEP: {sep_deg:.2f}°"
+            if self.view_mode == 'MISSION':
+                self.setTitle(f"MISSION TRAJECTORY{suffix}", color='#f1c40f', size='10pt')
+            else:
+                self.setTitle(f"HILBERT SPACE CONNECTIVITY{suffix}", color='#4facfe', size='10pt')
+        else:
+            if self.view_mode == 'POLAR':
+                self.setTitle("HILBERT SPACE CONNECTIVITY", color='#4facfe', size='10pt')
+            else:
+                self.setTitle("MISSION TRAJECTORY (HELIOCENTRIC)", color='#f1c40f', size='10pt')
+
+    def export_csv(self):
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Connectivity Data", "", "CSV Files (*.csv)")
+        if not filename: return
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["[OBJECTS]"])
+                writer.writerow(["Name", "RA", "Dec"])
+                for item in self.active_data:
+                    writer.writerow([item.get('name'), item.get('ra'), item.get('dec')])
+                writer.writerow([])
+                writer.writerow(["[SEPARATION MATRIX]"])
+                names = [item.get('name', 'Unknown') for item in self.active_data]
+                writer.writerow([''] + names)
+                for i1, item1 in enumerate(self.active_data):
+                    row = [names[i1]]
+                    for i2, item2 in enumerate(self.active_data):
+                        if i1 == i2: row.append(0.0)
+                        else:
+                            d1, d2 = np.radians(item1.get('dec',0)), np.radians(item2.get('dec',0))
+                            dra = np.radians(item1.get('ra',0) - item2.get('ra',0))
+                            val = np.sin(d1)*np.sin(d2) + np.cos(d1)*np.cos(d2)*np.cos(dra)
+                            row.append(np.degrees(np.arccos(max(min(val, 1.0), -1.0))))
+                    writer.writerow(row)
+        except Exception as e: print(f"CSV Export Error: {e}")
 
 class QueryWorker(QThread):
     results_ready = Signal(list)
@@ -708,6 +1198,10 @@ class StellarAnalytics(QWidget):
         
         # Start automatically
         QTimer.singleShot(500, self.start_live_monitoring)
+        
+        # Thread cleanup on app exit
+        app = QApplication.instance()
+        if app: app.aboutToQuit.connect(self.shutdown)
 
     @staticmethod
     def decimal_to_hms(deg):
@@ -881,14 +1375,14 @@ class StellarAnalytics(QWidget):
         
         # Instantiate Charts
         self.visibility = VisibilityCurve()
-        self.atmos = AtmosphereMonitor()
-        self.graph = TelemetryGraph()
+        self.retro = RetrogradePathTracker()
+        self.hilbert = HilbertSpaceVisualizer()
         self.skypath = SkyPathAnalyzer()
         
         # Wrap in ChartContainers (Title moved to Container)
         self.cont_vis = ChartContainer(self.visibility, "VISIBILITY FORECAST", "#2ecc71")
-        self.cont_atmos = ChartContainer(self.atmos, "ATMOSPHERE", "#e74c3c")
-        self.cont_tele = ChartContainer(self.graph, "LIVE TELEMETRY (1.5s)", "#4facfe")
+        self.cont_retro = ChartContainer(self.retro, "RETROGRADE TRACKER", "#e74c3c")
+        self.cont_hilbert = ChartContainer(self.hilbert, "HILBERT SPACE CONNECTIVITY", "#4facfe")
         self.cont_sky = ChartContainer(self.skypath, "SKY PATH (POLAR)", "#9b59b6")
         
         # Store initial grid positions for restore: (row, col, rowspan, colspan)
@@ -896,8 +1390,8 @@ class StellarAnalytics(QWidget):
         self.chart_positions = {
             self.cont_vis: (0, 0, 1, 1),
             self.cont_sky: (0, 1, 1, 1),
-            self.cont_atmos: (1, 0, 1, 1),
-            self.cont_tele: (1, 1, 1, 1)
+            self.cont_retro: (1, 0, 1, 1),
+            self.cont_hilbert: (1, 1, 1, 1)
         }
         
         # Add to Grid
@@ -1122,8 +1616,9 @@ class StellarAnalytics(QWidget):
             if self.slew_worker.isRunning():
                 self.slew_worker.terminate()
                 
-        if hasattr(self, 'query_worker') and hasattr(self.query_worker, 'isRunning') and self.query_worker.isRunning():
-            self.query_worker.wait(1000)
+        if hasattr(self, 'worker') and hasattr(self.worker, 'isRunning') and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait(1000)
             
     def send_ai_message(self, message):
         """Send message to AI assistant (Threaded)"""
@@ -1392,7 +1887,7 @@ class StellarAnalytics(QWidget):
                 del self.graph_data[name]
                 
         # 3. Update Plots
-        self.graph.update_plot(self.graph_data)
+        # self.graph.update_plot(self.graph_data) # Removed for Hilbert
         
 
         
@@ -1402,21 +1897,16 @@ class StellarAnalytics(QWidget):
         # Sky Path - Feed active items
         self.skypath.update_plot(active_items)
         
-        # Atmosphere (Monitor primary active target)
+        # Retrograde Tracker (Monitor primary active target)
         if active_items:
             primary = active_items[0]
-            raw = primary.get('raw', {})
-            airmass = raw.get('airmass', 0)
-            # Simple airmass fallback if 0 (Zenith or error)
-            if airmass <= 0:
-                 alt_rad = np.radians(primary.get('alt', 90))
-                 if alt_rad > 0:
-                     airmass = 1.0 / np.sin(alt_rad)
-                 else:
-                     airmass = 10.0
+            ra = primary.get('ra', 0)
+            dec = primary.get('dec', 0)
+            name = primary.get('name', 'Unknown')
+            self.retro.update_plot(ra, dec, name)
             
-            mag = primary.get('mag', 99)
-            self.atmos.update_plot(airmass, mag)
-            self.atmos.setTitle(f"ATMOSPHERE: {primary['name'].upper()}", color='#e74c3c', size='10pt')
+        self.hilbert.update_plot(active_items)
+            
+
 
 

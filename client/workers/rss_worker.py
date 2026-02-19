@@ -3,7 +3,6 @@ import html
 import json
 import requests
 from PySide6.QtCore import QThread, Signal
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from time import mktime
 
@@ -128,6 +127,9 @@ class RSSWorker(QThread):
         lat, lon = (loc_data['lat'], loc_data['lon']) if loc_data else (11.0168, 76.9558)
 
         # 2. Parallel Execution for remaining sources
+        # Lazy Import to avoid circular dependencies/Startup Hangs
+        from concurrent.futures import ThreadPoolExecutor
+        
         with ThreadPoolExecutor(max_workers=8) as executor:
             # RSS Feeds
             futures = {executor.submit(self.parse_feed, source, url): f"RSS-{source}" for source, url in self.FEED_SOURCES.items()}
@@ -291,7 +293,15 @@ class RSSWorker(QThread):
 
             for entry in feed.entries[:5]:
                 title = entry.get('title', 'No Title')
+                
+                # [FIX] Ensure link is a string. feedparser can return a dict if attributes exist.
                 link = entry.get('link', '#')
+                if hasattr(link, 'href'):
+                    link = link.href
+                elif isinstance(link, dict) and 'href' in link:
+                    link = link['href']
+                else:
+                    link = str(link)
                 summary = entry.get('summary', '') or entry.get('description', '')
                 
                 timestamp = 0
