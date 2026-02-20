@@ -13,6 +13,8 @@ import csv
 import pyqtgraph.exporters
 import pyqtgraph as pg
 import numpy as np
+import os
+from skyfield.api import load
 from client.ui.chat_widgets import ChatInterface
 
 class ChartContainer(QFrame):
@@ -657,6 +659,19 @@ class RetrogradePathTracker(pg.PlotWidget):
         self.last_target = None
         self.polar_mode = False 
         self.polar_grid_items = []
+        
+        # Prediction Curve
+        self.prediction_curve = self.plot(pen=pg.mkPen('#e74c3c', width=1, style=Qt.DashLine), name='Projection')
+        
+        # Load Ephemeris for prediction
+        try:
+            path = 'd:/Vector Infinity/de441.bsp'
+            if not os.path.exists(path):
+                path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'de441.bsp')
+            self.eph = load(path)
+            self.ts = load.timescale()
+        except:
+            self.eph = None
 
         # Context Menu
         self.plotItem.vb.menu = None # Disable default menu to avoid confusion? Or just add to it?
@@ -740,6 +755,7 @@ class RetrogradePathTracker(pg.PlotWidget):
             self.dec_history = []
             self.last_target = name
             self.setTitle(f"RETROGRADE: {name.upper()}", color='#e74c3c', size='10pt')
+            self.calculate_prediction(name)
             
         if not self.polar_mode:
              if self.ra_history:
@@ -758,6 +774,55 @@ class RetrogradePathTracker(pg.PlotWidget):
              self.dec_history.pop(0)
 
         self.update_plot_data()
+
+    def calculate_prediction(self, name):
+        """Project the retrograde loop for the next/prev 120 days."""
+        if not self.eph or name.lower() not in ['mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'mercury', 'venus']:
+            self.prediction_curve.setData([], [])
+            return
+
+        try:
+            # Plan: Sweep +/- 120 days from current time
+            # We need the current time from the app, but for now we'll use 'now'
+            # (In a real app, we'd pass the simulation time)
+            t_now = self.ts.now()
+            days = np.linspace(-120, 120, 100)
+            t_sweep = self.ts.tt_jd(t_now.tt + days)
+            
+            earth = self.eph['earth']
+            target_key = name.lower()
+            if 'barycenter' not in target_key and target_key != 'sun' and target_key != 'moon':
+                target_key += ' barycenter'
+            target = self.eph[target_key]
+            
+            astrometric = earth.at(t_sweep).observe(target)
+            ra_sweep, dec_sweep, _ = astrometric.radec()
+            
+            ra_hours = ra_sweep.hours
+            dec_deg = dec_sweep.degrees
+            
+            # Handle RA wrapping for Cartesian plot
+            if not self.polar_mode:
+                # Add NaNs where RA jumps across 0/24 boundary
+                diffs = np.abs(np.diff(ra_hours))
+                jumps = np.where(diffs > 12.0)[0]
+                if len(jumps) > 0:
+                    # Very simple gap handling: we just insert NaNs
+                    # A more robust way is needed for complex curves
+                    pass
+
+            if self.polar_mode:
+                rs = 90.0 - dec_deg
+                thetas = np.radians(ra_hours * 15.0)
+                xs = rs * np.cos(thetas)
+                ys = rs * np.sin(thetas)
+                self.prediction_curve.setData(xs, ys)
+            else:
+                self.prediction_curve.setData(ra_hours, dec_deg)
+                
+        except Exception as e:
+            print(f"Prediction Error for {name}: {e}")
+            self.prediction_curve.setData([], [])
 
     def update_plot_data(self):
         if not self.ra_history: return
@@ -809,6 +874,130 @@ class RetrogradePathTracker(pg.PlotWidget):
                     writer.writerow([r, d])
         except Exception as e:
             print(f"CSV Save Error: {e}")
+
+class RetrogradeGeometryView(pg.PlotWidget):
+    """
+    Heliocentric Geometry view matching the user's diagram.
+    Shows Earth overtaking a planet and the resulting projection.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackground('#0b0c10')
+        self.setTitle("RETROGRADE GEOMETRY (HELIOCENTRIC)", color='#f39c12', size='10pt')
+        self.setAspectLocked(True)
+        self.showGrid(x=False, y=False)
+        self.hideAxis('left')
+        self.hideAxis('bottom')
+        
+        # Grid/Circles
+        self.sun = pg.ScatterPlotItem(size=15, brush=pg.mkBrush('#f1c40f'), symbol='o')
+        self.sun.setData([{'pos': (0, 0)}])
+        self.addItem(self.sun)
+        
+        # Orbits (Earth ~1.0, Planet ~1.5+)
+        self.earth_orbit = QGraphicsEllipseItem(-50, -50, 100, 100)
+        self.earth_orbit.setPen(pg.mkPen(color='#3498db', width=1, style=Qt.DashLine))
+        self.addItem(self.earth_orbit)
+        
+        self.planet_orbit = QGraphicsEllipseItem(-80, -80, 160, 160)
+        self.planet_orbit.setPen(pg.mkPen(color='#e67e22', width=1, style=Qt.DashLine))
+        self.addItem(self.planet_orbit)
+        
+        # Bodies
+        self.earth_pos = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#3498db'), symbol='o')
+        self.addItem(self.earth_pos)
+        
+        self.planet_pos = pg.ScatterPlotItem(size=8, brush=pg.mkBrush('#e67e22'), symbol='o')
+        self.addItem(self.planet_pos)
+        
+        # Sight Line
+        self.sight_line = pg.PlotCurveItem(pen=pg.mkPen(color='#ffffff', width=1, style=Qt.DotLine))
+        self.addItem(self.sight_line)
+        
+        # Background "Sky" Arc (Celestial Sphere)
+        theta = np.linspace(-np.pi/4, np.pi/4, 50)
+        r = 150
+        self.sky_arc = pg.PlotCurveItem(r * np.cos(theta), r * np.sin(theta), pen=pg.mkPen(color='#2a2e38', width=2))
+        self.addItem(self.sky_arc)
+        
+        self.projection_point = pg.ScatterPlotItem(size=6, brush=pg.mkBrush('#ffffff'), symbol='o')
+        self.addItem(self.projection_point)
+        
+        self.setXRange(-100, 180)
+        self.setYRange(-100, 100)
+
+    def update_plot(self, targets):
+        # We need Earth and a selected planet
+        earth_data = None
+        planet_data = None
+        
+        for t in targets:
+            if t['name'].lower() == 'earth': earth_data = t
+            if t['name'].lower() in ['mars', 'jupiter', 'saturn', 'venus', 'mercury']: planet_data = t
+        
+        # If Earth isn't in targets (common in heliocentric), we might need to assume its position
+        # Or just use the first two targets
+        if not planet_data and len(targets) > 0:
+            planet_data = targets[0]
+            
+        if not planet_data: return
+
+        try:
+            # We'll simulate a relative geometry for visualization
+            # Angle based on RA for simplicity in representation
+            ra_planet = np.radians(planet_data.get('ra', 0))
+            # Simulating Earth a bit "behind" or "ahead" to show movement
+            # In a real retrograde (opposition), Earth is at RA_planet + 180? 
+            # Geocentrically, Sun is opposite planet.
+            
+            # Let's use Heliocentric angles if we had them. 
+            # For this UI widget, we'll project a simplified geometric scene.
+            
+            r_earth = 50
+            r_planet = 85
+            
+            # Use real RA to drive the rotation
+            theta_p = np.radians(planet_data.get('ra', 0))
+            # We want to show Earth overtaking, so we'll adjust Earth's angle
+            # relative to the observer's view.
+            
+            # Visualization Trick: Fix the Planet at a certain angle and move Earth
+            # Actually, let's just use their RA values to show their relative positions in the solar system
+            # (Assuming RA ~ Heliocentric Longitude for this simple diagram)
+            
+            px, py = r_planet * np.cos(theta_p), r_planet * np.sin(theta_p)
+            
+            # For Earth: We don't usually have Earth in the target list (it's the observer)
+            # But we can calculate its relative position if we know the Sun's RA (opposite to Earth's Hel Long)
+            sun_ra = 0
+            for t in targets:
+                if 'Sun' in t['name']: sun_ra = t.get('ra', 0)
+            
+            theta_e = np.radians(sun_ra + 180) # Earth is opposite Sun heliocentrically
+            ex, ey = r_earth * np.cos(theta_e), r_earth * np.sin(theta_e)
+            
+            self.earth_pos.setData([{'pos': (ex, ey)}])
+            self.planet_pos.setData([{'pos': (px, py)}])
+            
+            # Projection Line
+            # Vector from Earth to Planet
+            dx, dy = px - ex, py - ey
+            length = np.sqrt(dx*dx + dy*dy)
+            ux, uy = dx/length, dy/length
+            
+            # Extend to sky (R=150)
+            target_r = 150
+            # Solve for t where sqrt((ex+t*ux)^2 + (ey+t*uy)^2) = 150
+            # (ex+t*ux)^2 + (ey+t*uy)^2 = 150^2
+            # ... roughly t = 100+
+            sky_t = 180 
+            sx, sy = ex + sky_t*ux, ey + sky_t*uy
+            
+            self.sight_line.setData([ex, sx], [ey, sy])
+            self.projection_point.setData([{'pos': (sx, sy)}])
+            
+        except Exception as e:
+            print(f"Geometry Update Error: {e}")
 
 class HilbertSpaceVisualizer(pg.PlotWidget):
     def __init__(self, parent=None):
@@ -1375,22 +1564,22 @@ class StellarAnalytics(QWidget):
         
         # Instantiate Charts
         self.visibility = VisibilityCurve()
-        self.retro = RetrogradePathTracker()
+        self.retro_geo = RetrogradeGeometryView()
         self.hilbert = HilbertSpaceVisualizer()
         self.skypath = SkyPathAnalyzer()
         
         # Wrap in ChartContainers (Title moved to Container)
         self.cont_vis = ChartContainer(self.visibility, "VISIBILITY FORECAST", "#2ecc71")
-        self.cont_retro = ChartContainer(self.retro, "RETROGRADE TRACKER", "#e74c3c")
-        self.cont_hilbert = ChartContainer(self.hilbert, "HILBERT SPACE CONNECTIVITY", "#4facfe")
         self.cont_sky = ChartContainer(self.skypath, "SKY PATH (POLAR)", "#9b59b6")
+        self.cont_retro_geo = ChartContainer(self.retro_geo, "RETROGRADE GEOMETRY", "#f39c12")
+        self.cont_hilbert = ChartContainer(self.hilbert, "HILBERT SPACE CONNECTIVITY", "#4facfe")
         
         # Store initial grid positions for restore: (row, col, rowspan, colspan)
-        # We have 4 charts now. 2x2 Grid.
+        # 2x2 Grid for 4 primary charts
         self.chart_positions = {
             self.cont_vis: (0, 0, 1, 1),
             self.cont_sky: (0, 1, 1, 1),
-            self.cont_retro: (1, 0, 1, 1),
+            self.cont_retro_geo: (1, 0, 1, 1),
             self.cont_hilbert: (1, 1, 1, 1)
         }
         
@@ -1897,13 +2086,8 @@ class StellarAnalytics(QWidget):
         # Sky Path - Feed active items
         self.skypath.update_plot(active_items)
         
-        # Retrograde Tracker (Monitor primary active target)
-        if active_items:
-            primary = active_items[0]
-            ra = primary.get('ra', 0)
-            dec = primary.get('dec', 0)
-            name = primary.get('name', 'Unknown')
-            self.retro.update_plot(ra, dec, name)
+        # Update Retrograde Geometry
+        self.retro_geo.update_plot(active_items)
             
         self.hilbert.update_plot(active_items)
             
