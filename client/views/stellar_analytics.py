@@ -16,6 +16,8 @@ import numpy as np
 import os
 from skyfield.api import load
 from client.ui.chat_widgets import ChatInterface
+from client.widgets.earth_3d import Earth3DWidget
+from client.widgets.stellar_calendar import StellarCalendarWidget
 
 class ChartContainer(QFrame):
     maximize_requested = Signal(object, bool) # self, is_maximized
@@ -87,7 +89,8 @@ class ChartContainer(QFrame):
         
         # --- Content ---
         # PlotWidget sometimes has its own border/background, we override
-        plot_widget.setBackground('#0b0c10')
+        if hasattr(plot_widget, 'setBackground'):
+            plot_widget.setBackground('#0b0c10')
         # Remove title from PlotWidget since we have our own header now
         if hasattr(plot_widget, 'setTitle'):
             plot_widget.setTitle("")
@@ -1274,7 +1277,7 @@ class HilbertSpaceVisualizer(pg.PlotWidget):
         except Exception as e: print(f"CSV Export Error: {e}")
 
 class QueryWorker(QThread):
-    results_ready = Signal(list)
+    results_ready = Signal(list, float, float, float) # results, julian_date, lat, lon
     error_occurred = Signal(str)
 
     def __init__(self, query_type, category):
@@ -1343,7 +1346,22 @@ class QueryWorker(QThread):
                     pass
                     
             results.sort(key=lambda x: x['alt'], reverse=True)
-            self.results_ready.emit(results)
+            
+            # Get JD and location from status
+            jd = None    # None = Stellarium not reachable
+            lat = 0.0
+            lon = 0.0
+            try:
+                status_resp = session.get(f"{base_url}/api/main/status", timeout=0.5)
+                if status_resp.status_code == 200:
+                    status = status_resp.json()
+                    jd = status.get('jday', None)
+                    loc = status.get('location', {})
+                    lat = loc.get('latitude', 0.0)
+                    lon = loc.get('longitude', 0.0)
+            except: pass
+            
+            self.results_ready.emit(results, jd if jd is not None else 0.0, lat, lon)
             
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -1545,12 +1563,17 @@ class StellarAnalytics(QWidget):
         ab_layout.addWidget(self.btn_target)
         ab_layout.addWidget(self.btn_watch)
 
-        # Wrap Table and Action Bar in a container layout
+        # Wrap Table, Calendar and Action Bar in a container layout
         table_container = QWidget()
         tc_layout = QVBoxLayout(table_container)
         tc_layout.setContentsMargins(0,0,0,0)
         tc_layout.setSpacing(0)
         tc_layout.addWidget(self.table)
+
+        # ── Stellar Calendar (two-way Stellarium sync) ──────────────────────
+        self.stellar_calendar = StellarCalendarWidget()
+        tc_layout.addWidget(self.stellar_calendar)
+
         tc_layout.addWidget(action_bar)
 
         # 2. RIGHT: Data Dashboard (QStackedWidget for Maximize Support)
@@ -1564,14 +1587,14 @@ class StellarAnalytics(QWidget):
         
         # Instantiate Charts
         self.visibility = VisibilityCurve()
-        self.retro_geo = RetrogradeGeometryView()
+        self.earth_3d = Earth3DWidget()
         self.hilbert = HilbertSpaceVisualizer()
         self.skypath = SkyPathAnalyzer()
         
         # Wrap in ChartContainers (Title moved to Container)
         self.cont_vis = ChartContainer(self.visibility, "VISIBILITY FORECAST", "#2ecc71")
         self.cont_sky = ChartContainer(self.skypath, "SKY PATH (POLAR)", "#9b59b6")
-        self.cont_retro_geo = ChartContainer(self.retro_geo, "RETROGRADE GEOMETRY", "#f39c12")
+        self.cont_earth_3d = ChartContainer(self.earth_3d, "EARTH ROTATION (3D)", "#4facfe")
         self.cont_hilbert = ChartContainer(self.hilbert, "HILBERT SPACE CONNECTIVITY", "#4facfe")
         
         # Store initial grid positions for restore: (row, col, rowspan, colspan)
@@ -1579,7 +1602,7 @@ class StellarAnalytics(QWidget):
         self.chart_positions = {
             self.cont_vis: (0, 0, 1, 1),
             self.cont_sky: (0, 1, 1, 1),
-            self.cont_retro_geo: (1, 0, 1, 1),
+            self.cont_earth_3d: (1, 0, 1, 1),
             self.cont_hilbert: (1, 1, 1, 1)
         }
         
@@ -1703,8 +1726,6 @@ class StellarAnalytics(QWidget):
         self.worker.error_occurred.connect(self.on_query_error)
         self.worker.start()
 
-        self.worker.start()
-
     def handle_chart_maximize(self, container, is_maximized):
         if is_maximized:
             # 1. Switch to Maximized Page
@@ -1794,6 +1815,8 @@ class StellarAnalytics(QWidget):
 
     def shutdown(self):
         """Join all background threads before destruction"""
+        self.refresh_timer.stop()
+
         if hasattr(self, 'ai_worker') and self.ai_worker.isRunning():
             self.ai_worker.requestInterruption()
             self.ai_worker.wait(2000)
@@ -1805,9 +1828,11 @@ class StellarAnalytics(QWidget):
             if self.slew_worker.isRunning():
                 self.slew_worker.terminate()
                 
-        if hasattr(self, 'worker') and hasattr(self.worker, 'isRunning') and self.worker.isRunning():
+        if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
             self.worker.quit()
-            self.worker.wait(1000)
+            if not self.worker.wait(3000):   # wait up to 3 s
+                self.worker.terminate()      # force-kill if still alive
+                self.worker.wait(500)
             
     def send_ai_message(self, message):
         """Send message to AI assistant (Threaded)"""
@@ -1882,8 +1907,11 @@ class StellarAnalytics(QWidget):
         except: return "+0° 0' 0.0\""
 
     # RE-IMPLEMENTATION WITH WIDGETS IN COL 0
-    def update_table(self, data):
+    def update_table(self, data, jd=None, lat=0.0, lon=0.0):
         self.latest_data = data 
+        self.current_jd = jd
+        self.current_lat = lat
+        self.current_lon = lon
         self.is_updating_table = True 
         
         # PERFORMANCE: Block UI Updates
@@ -1985,7 +2013,7 @@ class StellarAnalytics(QWidget):
         except Exception as e:
             print(f"Table Update Error: {e}")
         finally:
-            try: self.update_graph_data(data)
+            try: self.update_graph_data(data, self.current_jd, getattr(self, 'current_lat', 0.0), getattr(self, 'current_lon', 0.0))
             except: pass
             self.is_updating_table = False
             self.table.setUpdatesEnabled(True)
@@ -2046,7 +2074,7 @@ class StellarAnalytics(QWidget):
         self.slew_worker = SlewWorker(target_name, mode)
         self.slew_worker.start()
 
-    def update_graph_data(self, data):
+    def update_graph_data(self, data, jd=None, lat=0.0, lon=0.0):
         current_time = time.time() - self.start_time
         
         # 1. Update Data Structure for Live Telemetry
@@ -2086,8 +2114,12 @@ class StellarAnalytics(QWidget):
         # Sky Path - Feed active items
         self.skypath.update_plot(active_items)
         
-        # Update Retrograde Geometry
-        self.retro_geo.update_plot(active_items)
+        # Update 3D Earth rotation and observer location
+        if jd and jd > 0.0:   # jd=0.0 means Stellarium was offline
+            self.earth_3d.update_time(jd)
+            # Push to calendar only when Stellarium is actually connected
+            self.stellar_calendar.update_from_jd(jd)
+        self.earth_3d.update_observer_location(lat, lon)
             
         self.hilbert.update_plot(active_items)
             

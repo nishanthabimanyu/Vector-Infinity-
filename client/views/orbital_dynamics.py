@@ -10,17 +10,17 @@ import json
 AU = 1.495978707e11  # m
 
 PLANET_DATA = {
-    'sun': {'color': (1, 1, 0, 1), 'radius': 1.8, 'mass_factor': 6.0, 'well_spread': 8.0}, 
-    'mercury': {'color': (0.7, 0.7, 0.7, 1), 'radius': 0.4, 'mass_factor': 1.5, 'well_spread': 4.0},
-    'venus': {'color': (0.9, 0.7, 0.4, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
-    'earth': {'color': (0.3, 0.5, 1.0, 1), 'radius': 0.6, 'mass_factor': 2.5, 'well_spread': 3.0},
-    'moon': {'color': (0.9, 0.9, 0.9, 1), 'radius': 0.2, 'mass_factor': 0.5, 'well_spread': 1.0},
-    'mars': {'color': (1, 0.4, 0.4, 1), 'radius': 0.5, 'mass_factor': 2.0, 'well_spread': 2.5},
-    'jupiter': {'color': (0.8, 0.6, 0.5, 1), 'radius': 1.2, 'mass_factor': 4.5, 'well_spread': 5.0},
-    'saturn': {'color': (0.9, 0.8, 0.6, 1), 'radius': 1.1, 'mass_factor': 4.0, 'well_spread': 4.5},
-    'uranus': {'color': (0.6, 0.8, 0.9, 1), 'radius': 0.9, 'mass_factor': 3.5, 'well_spread': 4.0},
-    'neptune': {'color': (0.4, 0.5, 1.0, 1), 'radius': 0.9, 'mass_factor': 3.5, 'well_spread': 4.0},
-    'pluto': {'color': (0.6, 0.5, 0.4, 1), 'radius': 0.3, 'mass_factor': 1.0, 'well_spread': 2.0},
+    'sun': {'color': (1, 1, 0, 1), 'radius': 4.0, 'mass_factor': 6.0, 'well_spread': 8.0}, 
+    'mercury': {'color': (0.7, 0.7, 0.7, 1), 'radius': 1.0, 'mass_factor': 1.5, 'well_spread': 4.0},
+    'venus': {'color': (0.9, 0.7, 0.4, 1), 'radius': 1.5, 'mass_factor': 2.5, 'well_spread': 3.0},
+    'earth': {'color': (0.3, 0.5, 1.0, 1), 'radius': 1.5, 'mass_factor': 2.5, 'well_spread': 3.0},
+    'moon': {'color': (0.9, 0.9, 0.9, 1), 'radius': 0.5, 'mass_factor': 0.5, 'well_spread': 1.0},
+    'mars': {'color': (1, 0.4, 0.4, 1), 'radius': 1.2, 'mass_factor': 2.0, 'well_spread': 2.5},
+    'jupiter': {'color': (0.8, 0.6, 0.5, 1), 'radius': 3.0, 'mass_factor': 4.5, 'well_spread': 5.0},
+    'saturn': {'color': (0.9, 0.8, 0.6, 1), 'radius': 2.8, 'mass_factor': 4.0, 'well_spread': 4.5},
+    'uranus': {'color': (0.6, 0.8, 0.9, 1), 'radius': 2.2, 'mass_factor': 3.5, 'well_spread': 4.0},
+    'neptune': {'color': (0.4, 0.5, 1.0, 1), 'radius': 2.2, 'mass_factor': 3.5, 'well_spread': 4.0},
+    'pluto': {'color': (0.6, 0.5, 0.4, 1), 'radius': 0.8, 'mass_factor': 1.0, 'well_spread': 2.0},
 }
 
 class OrbitalDynamics(QtWidgets.QWidget):
@@ -290,11 +290,11 @@ class OrbitalDynamics(QtWidgets.QWidget):
         """Switch camera perspective."""
         # 1. Update Camera Position
         if index == 0: # Perspective
-            self.view.setCameraPosition(distance=1000, elevation=45, azimuth=-45)
+            self.view.setCameraPosition(distance=2000, elevation=45, azimuth=-45)
         elif index == 1: # Top-Down (Map)
-            self.view.setCameraPosition(distance=1200, elevation=90, azimuth=-90)
+            self.view.setCameraPosition(distance=2500, elevation=90, azimuth=-90)
         elif index == 2: # Side View
-            self.view.setCameraPosition(distance=1500, elevation=0, azimuth=-90)
+            self.view.setCameraPosition(distance=3000, elevation=0, azimuth=-90)
 
     def toggle_grid(self, visible):
         """Toggle the spacetime fabric mesh."""
@@ -390,6 +390,16 @@ class OrbitalDynamics(QtWidgets.QWidget):
         if hasattr(self, 'controls'):
             self.controls.setGeometry(self.width() - 270, 20, 250, 380)
 
+    def showEvent(self, event):
+        """Standard Qt show event override."""
+        super().showEvent(event)
+        self.on_show()
+
+    def hideEvent(self, event):
+        """Standard Qt hide event override."""
+        super().hideEvent(event)
+        self.on_hide()
+
     def on_calculate_clicked(self):
         """Handle button click to update simulation time."""
         date_text = self.date_input.text().strip()
@@ -402,8 +412,8 @@ class OrbitalDynamics(QtWidgets.QWidget):
             self.setup_data(time_input)
             
             # 2. Update Grid
-            scale = 10.0
-            grid_size = 500
+            scale = 20.0
+            grid_size = 1000
             
             # Optimization: Lower resolution during animation
             if self.is_playing:
@@ -562,9 +572,9 @@ class OrbitalDynamics(QtWidgets.QWidget):
 
     def setup_scene(self):
         """Initialize the wireframe grid using Gaussian wells for localized dips."""
-        # Scale: 1 AU = 10 units (Covering ~50 AU with 500 units)
-        scale = 10.0
-        grid_size = 500  # +/- 500 units = +/- 50 AU (to include Pluto)
+        # Scale: 1 AU = 20 units (Covering ~50 AU with 1000 units)
+        scale = 20.0
+        grid_size = 1000  # +/- 1000 units = +/- 50 AU (to include Pluto)
         grid_res = 500   # Maintain density for the larger area
         x = np.linspace(-grid_size, grid_size, grid_res)
         y = np.linspace(-grid_size, grid_size, grid_res)
@@ -644,22 +654,33 @@ class OrbitalDynamics(QtWidgets.QWidget):
                 self.view.addItem(orbit_path_funnel)
                 self.funnel_paths[key] = orbit_path_funnel
 
-        self.view.setCameraPosition(distance=800, elevation=45, azimuth=-45)
+        self.view.setCameraPosition(distance=1600, elevation=45, azimuth=-45)
 
     def setup_labels(self):
-        """Create floating labels with arrows for each layer."""
+        """Create floating labels with backgrounds and borders for each body."""
         for key in self.bodies_pos.keys():
             if key not in PLANET_DATA: continue
             
-            # 1. Physical Bottom Labels (↓)
-            lbl_phys = QtWidgets.QLabel(f"{key.upper()}<br>↓", self.view)
+            lbl_phys = QtWidgets.QLabel(f"{key.upper()}", self.view)
             lbl_phys.setAlignment(QtCore.Qt.AlignCenter)
-            # Enhanced Visibility: Larger font (14px), Bold
             color = self.get_planet_html_color(key)
-            # Removed text-shadow (not supported in simple QLabel CSS)
-            lbl_phys.setStyleSheet(f"color: {color}; font-family: 'Consolas'; font-size: 14px; font-weight: 900; background: transparent; padding-bottom: 5px;")
+            
+            # Improved CSS for visibility: Dark background, border matching planet color
+            lbl_phys.setStyleSheet(f"""
+                QLabel {{
+                    color: {color};
+                    font-family: 'Consolas', monospace;
+                    font-size: 13px;
+                    font-weight: bold;
+                    background: rgba(0, 0, 0, 180);
+                    border: 1px solid {color};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }}
+            """)
             lbl_phys.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-            lbl_phys.show()
+            lbl_phys.adjustSize()
+            lbl_phys.hide()
             self.body_labels[key] = lbl_phys
 
     def update_label_positions(self):
@@ -686,9 +707,15 @@ class OrbitalDynamics(QtWidgets.QWidget):
                     if cp_phys[3] > 0:
                         sx = (cp_phys[0]/cp_phys[3] + 1.0) * w_view / 2.0
                         sy = (1.0 - cp_phys[1]/cp_phys[3]) * h_view / 2.0
+                        
+                        # Ensure label has calculated its size at least once while visible
+                        if self.body_labels[key].width() <= 1:
+                            self.body_labels[key].adjustSize()
+                            
+                        # Properly center the label background
                         lw, lh = self.body_labels[key].width(), self.body_labels[key].height()
-                        # Position name ABOVE the arrow for top labels
-                        self.body_labels[key].move(int(sx - lw/2), int(sy - lh - 15))
+                        # Position slightly above the well center
+                        self.body_labels[key].move(int(sx - lw/2), int(sy - lh - 10))
                         self.body_labels[key].show()
                     else:
                         self.body_labels[key].hide()
@@ -786,7 +813,9 @@ class OrbitalDynamics(QtWidgets.QWidget):
     def on_show(self):
         """Start simulation updates when view becomes active."""
         if hasattr(self, 'label_timer'):
-            self.label_timer.start(50) # 20 FPS (Reduced from 30ms)
+            self.label_timer.start(50) # 20 FPS
+            # Call immediately to prevent 1-frame flicker/delay
+            self.update_label_positions()
         print("[OrbitalDynamics] Scan Active (Timer Started)")
 
     def on_hide(self):
