@@ -7,10 +7,13 @@ os.environ["QT_OPENGL"] = "desktop"
 os.environ["QSG_RHI_BACKEND"] = "opengl"
 os.environ["QT_RHI_BACKEND"] = "opengl"
 os.environ["QT_WIDGETS_RHI_BACKEND"] = "opengl"
-os.environ["QT_ANGLE_PLATFORM"] = "gl"
+# [REFINED] Comment out ANGLE override to allow more stable defaults for software paths
+# os.environ["QT_ANGLE_PLATFORM"] = "gl"
 
-# [CRITICAL] Disable WebEngine GPU to prevent context sharing crash with OrbitalDynamics
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+# [CRITICAL] Nuclear Rendering Isolation
+# Force WebEngine into strict software mode to prevent context sharing crashes
+os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing --disable-viz-display-compositor --no-sandbox"
 
 from PySide6 import QtCore
 from PySide6.QtWidgets import QApplication, QMainWindow
