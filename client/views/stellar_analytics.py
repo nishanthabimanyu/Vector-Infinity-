@@ -1513,9 +1513,18 @@ class StellarAnalytics(QWidget):
         # Column Resizing Logic
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.Interactive)  # Allow resizing
-        self.table.setColumnWidth(0, 180)  # Set initial width for obj names + checkbox
-        for i in range(1, 8): header.setSectionResizeMode(i, QHeaderView.Stretch)
+        
+        # [REFINED] Proportional Column Control
+        self.table.setColumnWidth(0, 180)  # Name + Checkbox
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) # Type
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents) # Mag
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents) # Phase
+        
+        # Data Columns get the stretch
+        header.setSectionResizeMode(4, QHeaderView.Stretch) # Transit
+        header.setSectionResizeMode(5, QHeaderView.Stretch) # RA
+        header.setSectionResizeMode(6, QHeaderView.Stretch) # DEC
+        header.setSectionResizeMode(7, QHeaderView.Stretch) # ALT
         
         self.table.cellClicked.connect(self.on_row_clicked)
 
@@ -1565,6 +1574,9 @@ class StellarAnalytics(QWidget):
 
         # Wrap Table, Calendar and Action Bar in a container layout
         table_container = QWidget()
+        # [CRITICAL] Enforce fixed-feel minimum width to prevent squashing
+        table_container.setMinimumWidth(500) 
+        
         tc_layout = QVBoxLayout(table_container)
         tc_layout.setContentsMargins(0,0,0,0)
         tc_layout.setSpacing(0)
@@ -1636,8 +1648,11 @@ class StellarAnalytics(QWidget):
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
         
-        # Set Sizes: Table gets ~30%, Graphs get ~70%
-        splitter.setSizes([350, 850]) 
+        # Set Sizes: Table gets its fixed minimum, Graphs get the rest
+        # Initial split ratio 1:2
+        splitter.setSizes([550, 1100]) 
+        splitter.setStretchFactor(0, 0) # Fixed-feel for table
+        splitter.setStretchFactor(1, 1) # Graphs expand
         
         main_layout.addWidget(splitter)
         return widget
