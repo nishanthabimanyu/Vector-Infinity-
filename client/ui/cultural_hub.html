@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cultural Hub - Vector Infinity</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Orbitron:wght@700;900&family=Rajdhani:wght@500;700&display=swap"
+        rel="stylesheet">
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+        :root {
+            --bg: #050608;
+            --sidebar-bg: #0e1116;
+            --card-bg: rgba(16, 20, 28, 0.95);
+            --border: rgba(255, 255, 255, 0.08);
+            --primary: #4facfe;
+            --primary-glow: rgba(79, 172, 254, 0.3);
+            --text: #e0e0e0;
+            --text-dim: #8b949e;
+            --accent: #00f2fe;
+            --warning: #f1c40f;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            min-height: 100vh;
+            padding: 40px;
+            overflow-x: hidden;
+            background-image:
+                radial-gradient(circle at 2px 2px, rgba(255, 255, 255, 0.03) 1px, transparent 0);
+            background-size: 32px 32px;
+        }
+
+        /* --- PORTAL STATUS OVERLAY --- */
+        #portal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 6, 8, 0.9);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .portal-pulse {
+            width: 150px;
+            height: 150px;
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            position: relative;
+            animation: pulse-ring 2s infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        .portal-text {
+            margin-top: 30px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            letter-spacing: 5px;
+            color: var(--primary);
+            text-align: center;
+        }
+
+        /* --- HEADER SECTION --- */
+        .hub-header {
+            margin-bottom: 50px;
+            border-left: 3px solid var(--primary);
+            padding-left: 20px;
+        }
+
+        .hub-header h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            letter-spacing: 4px;
+            color: var(--primary);
+            text-transform: uppercase;
+        }
+
+        .hub-header .subtitle {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 5px;
+            letter-spacing: 2px;
+        }
+
+        /* --- FILTERS / LEGEND --- */
+        .toolbar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 9px;
+            padding: 4px 10px;
+            border-radius: 2px;
+            background: rgba(79, 172, 254, 0.05);
+            border: 1px solid rgba(79, 172, 254, 0.2);
+            color: var(--primary);
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        /* --- CARD GRID --- */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+        }
+
+        .culture-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            position: relative;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .culture-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .card-visual {
+            height: 140px;
+            background: #0b0c10;
+            position: relative;
+            overflow: hidden;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-visual::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--border) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border) 1px, transparent 1px);
+            background-size: 15px 15px;
+            opacity: 0.3;
+        }
+
+        .schematic-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 40px;
+            color: rgba(79, 172, 254, 0.1);
+            font-weight: 900;
+        }
+
+        .scanline {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(79, 172, 254, 0.25);
+            box-shadow: 0 0 10px var(--primary);
+            animation: scan 4s linear infinite;
+            z-index: 2;
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0;
+            }
+
+            100% {
+                top: 100%;
+            }
+        }
+
+        .card-header {
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-id {
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .card-label {
+            font-size: 9px;
+            color: var(--primary);
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .card-content {
+            padding: 20px;
+            flex: 1;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 5px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
+        .card-meta {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .tech-box {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 2px;
+            border-left: 2px solid var(--primary);
+            margin-bottom: 20px;
+        }
+
+        .tech-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            margin-bottom: 6px;
+        }
+
+        .tech-key {
+            color: var(--text-dim);
+        }
+
+        .tech-val {
+            color: var(--primary);
+            font-weight: bold;
+        }
+
+        .card-actions {
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid var(--border);
+        }
+
+        .btn-portal {
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-portal:hover {
+            background: var(--primary);
+            color: #000;
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .footer-info {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            text-align: right;
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+        }
+
+        .flicker {
+            animation: flicker 0.5s ease-out;
+        }
+
+        @keyframes flicker {
+            0% {
+                color: var(--primary);
+                text-shadow: 0 0 10px var(--primary);
+            }
+
+            100% {
+                color: #fff;
+                text-shadow: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="portal-overlay">
+        <div class="portal-pulse"></div>
+        <div class="portal-text" id="status-text">INITIATING SPATIOTEMPORAL LINK...</div>
+        <div class="subtitle" style="margin-top: 10px;" id="location-sync">SYNCING COORDINATES...</div>
+    </div>
+
+    <div class="hub-header">
+        <h1>CULTURAL MULTIVERSE // PORTAL</h1>
+        <div class="subtitle">SYNCHRONIZING UNIVERSAL EVENTS ACROSS LOCALIZED OBSERVER FRAMES</div>
+    </div>
+
+    <div class="toolbar">
+        <div class="badge">SYST: MULTIVERSE_CONNECTED</div>
+        <div class="badge">CONN: LOCAL_BRIDGE_ALIVE</div>
+        <div class="badge">MODL: TEMPORAL_SYNC_V4</div>
+    </div>
+
+    <div class="card-grid" id="card-grid"></div>
+
+    <div class="footer-info">
+        VECTOR INFINITY // MULTIVERSE_ENGINE // LEVEL 5 ENCRYPTION
+    </div>
+
+    <script>
+        const cultures = [
+            {
+                id: "BAB_01",
+                name: "Babylonian Astronomy",
+                era: "750 BCE - 100 CE",
+                frame: "Ecliptic",
+                stel_id: "babylonian",
+                location: { name: "Babylon", lat: 32.54, lon: 44.42, elev: 35 }
+            },
+            {
+                id: "SUR_02",
+                name: "Surya Siddhanta",
+                era: "500 CE - Present",
+                frame: "Sidereal Ecliptic",
+                stel_id: "indian",
+                location: { name: "Ujjain", lat: 23.17, lon: 75.78, elev: 492 }
+            },
+            {
+                id: "MAY_03",
+                name: "Mayan Calendrics",
+                era: "250 CE - 900 CE",
+                frame: "Horizontal",
+                stel_id: "maya",
+                location: { name: "Chichen Itza", lat: 20.68, lon: -88.57, elev: 10 }
+            },
+            {
+                id: "PTO_04",
+                name: "Ptolemaic System",
+                era: "150 CE - 1600 CE",
+                frame: "Equatorial",
+                stel_id: "western",
+                location: { name: "Alexandria", lat: 31.20, lon: 29.91, elev: 5 }
+            },
+            {
+                id: "CHI_05",
+                name: "Chinese Astronomy",
+                era: "2000 BCE - 1600 CE",
+                frame: "Equatorial (Polar)",
+                stel_id: "chinese",
+                location: { name: "Xi'an", lat: 34.26, lon: 108.94, elev: 405 }
+            },
+            {
+                id: "ISL_06",
+                name: "Islamic Golden Age",
+                era: "800 CE - 1400 CE",
+                frame: "Equatorial Hybrid",
+                stel_id: "arabic",
+                location: { name: "Baghdad", lat: 33.31, lon: 44.36, elev: 34 }
+            }
+        ];
+
+        const grid = document.getElementById('card-grid');
+        let bridge = null;
+
+        // Initialize QWebChannel
+        new QWebChannel(qt.webChannelTransport, function (channel) {
+            bridge = channel.objects.bridge;
+            console.log("Python Bridge connected.");
+            if (!bridge) {
+                console.error("Bridge failure: channel.objects.bridge is undefined");
+            }
+        });
+
+        function renderCultures() {
+            grid.innerHTML = cultures.map(c => `
+                <div class="culture-card" data-cid="${c.id}">
+                    <div class="card-visual">
+                        <div class="scanline"></div>
+                        <div class="schematic-overlay">${c.id.split('_')[0]}</div>
+                    </div>
+                    <div class="card-header">
+                        <div class="card-id">PORTAL_${c.id}</div>
+                        <div class="card-label">Spatiotemporal_Link</div>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-title">${c.name}</div>
+                        <div class="card-meta">
+                            <span>ERA: ${c.era}</span>
+                        </div>
+                        
+                        <div class="tech-box">
+                            <div class="tech-item">
+                                <span class="tech-key">LOCAL_POINT:</span>
+                                <span class="tech-val">${c.location.name.toUpperCase()}</span>
+                            </div>
+                            <div class="tech-item">
+                                <span class="tech-key">COORD_FRAME:</span>
+                                <span class="tech-val">${c.frame.toUpperCase()}</span>
+                            </div>
+                            <div class="tech-item" style="border-top:1px solid rgba(79,172,254,0.1); margin-top:8px; padding-top:8px;">
+                                <span class="tech-key">LIVE_CONVERSION:</span>
+                                <span class="tech-val live-val" style="color:#444">WAITING_FOR_DATA...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-actions">
+                        <button class="btn-portal" onclick="openPortal('${c.id}')">
+                            <span style="font-size:16px">⊕</span> Enter Portal
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function openPortal(cultureId) {
+            const culture = cultures.find(c => c.id === cultureId);
+            if (!culture || !bridge) return;
+
+            const overlay = document.getElementById('portal-overlay');
+            const statusText = document.getElementById('status-text');
+            const locSync = document.getElementById('location-sync');
+
+            overlay.style.display = 'flex';
+            statusText.innerText = "INITIATING SPATIOTEMPORAL LINK...";
+            locSync.innerText = `SYNCING TO ${culture.location.name.toUpperCase()}...`;
+
+            try {
+                // 1. Set Location (Spatial Sync) via Bridge
+                bridge.set_location(culture.location.name, culture.location.lat, culture.location.lon, culture.location.elev);
+
+                // 2. Set Sky Culture & Visuals via Bridge
+                bridge.set_property('StelSkyCultureMgr.currentSkyCultureID', culture.stel_id);
+                bridge.set_property('ConstellationMgr.flagConstellationLines', 'true');
+                bridge.set_property('ConstellationMgr.flagConstellationLabels', 'true');
+
+                statusText.innerText = "LINK ESTABLISHED";
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                }, 1000);
+
+            } catch (e) {
+                console.error("Portal failure", e);
+                statusText.innerText = "LINK FAILURE: BRIDGE OFFLINE";
+                locSync.innerText = "CHECK STELLARIUM REMOTE CONTROL ON PORT 8090";
+                setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+            }
+        }
+
+        // Global function called by Python bridge
+        window.updateConversions = function (data) {
+            for (let cid in data) {
+                // Find card with matching id prefix
+                const card = document.querySelector(`.culture-card[data-cid^="${cid.substring(0, 3).toUpperCase()}"]`);
+                if (card) {
+                    const display = card.querySelector('.live-val');
+                    if (display) {
+                        display.innerText = data[cid];
+                        display.style.color = '#fff';
+                        display.classList.add('flicker');
+                        setTimeout(() => display.classList.remove('flicker'), 500);
+                    }
+                }
+            }
+        };
+
+        renderCultures();
+    </script>
+</body>
+
+</html>

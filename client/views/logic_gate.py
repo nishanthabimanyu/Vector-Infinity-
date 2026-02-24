@@ -16,6 +16,7 @@ from client.widgets.chat_widget import VectorChatWidget
 from client.views.stellar_analytics import StellarAnalytics
 from client.views.orbital_dynamics import OrbitalDynamics
 from client.views.chronos_engine import ChronosEngine
+from client.views.cultural_hub_view import CulturalHubView
 
 import io
 
@@ -397,6 +398,26 @@ class LogicGate(QWidget):
             self.set_immersive_mode(True)
         btn_chronos_cf.clicked.connect(open_chronos)
         p1_layout.addWidget(btn_chronos_cf)
+
+        # [NEW] Cultural Hub Button (Direct Access)
+        btn_culture_cf = QPushButton("CULTURAL HUB")
+        btn_culture_cf.setCursor(Qt.PointingHandCursor)
+        btn_culture_cf.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 157, 0, 0.1); 
+                border: 1px solid #ff9d00; 
+                color: #ff9d00; 
+                font-weight: bold; 
+                padding: 10px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover { background: rgba(255, 157, 0, 0.2); }
+        """)
+        def open_culture():
+            QTimer.singleShot(0, lambda: self.stage_stack.setCurrentIndex(7))
+            self.set_immersive_mode(True)
+        btn_culture_cf.clicked.connect(open_culture)
+        p1_layout.addWidget(btn_culture_cf)
         
         # DEV BUTTON
         # MISSION HUB / INFO BUTTON
@@ -590,6 +611,10 @@ class LogicGate(QWidget):
         # Page 6: Chronos Engine (Probabilistic Dating)
         self.chronos_engine = ChronosEngine(self.vector_client)
         self.stage_stack.addWidget(self.chronos_engine)
+
+        # Page 7: Cultural Hub (Interactive card-based UI)
+        self.cultural_hub = CulturalHubView()
+        self.stage_stack.addWidget(self.cultural_hub)
 
         # [NEW] View Lifecycle Management
         self.stage_stack.currentChanged.connect(self.on_view_changed)
@@ -1635,6 +1660,7 @@ class LogicGate(QWidget):
         self.stellarium_worker = StellariumWorker(host=host, port=port)
         self.stellarium_worker.connection_status.connect(self.on_stellarium_status)
         self.stellarium_worker.latency_updated.connect(self.on_latency_update)
+        self.stellarium_worker.telemetry_data.connect(self.on_telemetry_update)
         self.stellarium_worker.start()
 
     def on_stellarium_status(self, connected, message):
@@ -1644,17 +1670,13 @@ class LogicGate(QWidget):
             self.status_text.setStyleSheet("color: #2ecc71; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
             self.status_text.setText(f"STATUS: {message}")
             
-            # Switch to Mission Control Sidebar
-            self.sidebar_stack.setCurrentIndex(1) 
+            # [REMOVED] Jarring auto-switches on connection
+            # self.sidebar_stack.setCurrentIndex(1) 
+            # self.sidebar_stack.setCurrentIndex(1) 
             
-            # Switch to Mission Control Sidebar
-            self.sidebar_stack.setCurrentIndex(1) 
-            
-            # [USER REQUEST] Primary View is now Stellar Analytics (Index 4)
-            self.stage_stack.setCurrentIndex(4)
-            
-            # [USER REQUEST] Hide Sidebar to focus on Chat (Immersive Mode)
-            self.set_immersive_mode(True)
+            # [REMOVED] Jarring auto-switches. Keep user in current view.
+            # self.stage_stack.setCurrentIndex(4)
+            # self.set_immersive_mode(True)
             
         else:
             self.status_led.setStyleSheet("color: #e74c3c; font-size: 10px; margin-right: 5px;") 
@@ -1664,6 +1686,11 @@ class LogicGate(QWidget):
             # Revert
             self.sidebar_stack.setCurrentIndex(0)
             self.set_immersive_mode(False)
+
+    def on_telemetry_update(self, telemetry):
+        # Relay telemetry to the active cultural hub if visible
+        if hasattr(self, 'cultural_hub'):
+            self.cultural_hub.update_telemetry(telemetry)
 
     def on_latency_update(self, latency_ms):
         # Update connection label with live ping
