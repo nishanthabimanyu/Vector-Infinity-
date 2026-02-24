@@ -1,0 +1,64 @@
+{
+    "cultures": [
+        {
+            "id": "babylonian",
+            "title": "Babylonian Astronomy",
+            "era": "750 BCE - 100 CE",
+            "rarity": "Legendary",
+            "stats": {
+                "precision": 85,
+                "complexity": 70,
+                "historical_depth": 90,
+                "observational_focus": "Planetary/Omen"
+            },
+            "special_ability": "Arithmetical Models: Predicts synodic phenomena using zig-zag functions.",
+            "description": "The foundation of mathematical astronomy, specializing in the precision of planetary cycles.",
+            "image_prompt": "Ancient cuneiform tablet with a golden glow, showing orbital diagrams of Jupiter, hyper-realistic, dark aesthetic, neon blue accents."
+        },
+        {
+            "id": "surya_siddhanta",
+            "title": "Surya Siddhanta",
+            "era": "500 CE - Present",
+            "rarity": "Legendary",
+            "stats": {
+                "precision": 92,
+                "complexity": 95,
+                "historical_depth": 85,
+                "observational_focus": "Siddhantik/Trigonometric"
+            },
+            "special_ability": "Differentiable Archaeoastronomy: Optimized planetary parameters using sine-table legacy.",
+            "description": "The zenith of Indian astronomical thought, utilizing advanced trigonometry for orbital calculations.",
+            "image_prompt": "Golden mandala featuring a celestial sphere, intricate Sanskrit engravings, glowing orange energy, cinematic lighting."
+        },
+        {
+            "id": "mayan",
+            "title": "Mayan Calendrics",
+            "era": "250 CE - 900 CE",
+            "rarity": "Epic",
+            "stats": {
+                "precision": 88,
+                "complexity": 80,
+                "historical_depth": 75,
+                "observational_focus": "Venus/Solar"
+            },
+            "special_ability": "Long Count Sync: Perfect alignment of human time with the Venus cycle.",
+            "description": "Master observers of Venus, integrating time synchronization across multiple overlapping calendars.",
+            "image_prompt": "Mayan stone calendar wheel with glowing green glyphs, tropical jungle ruins in the background, misty atmosphere, teal lighting."
+        },
+        {
+            "id": "ptolemaic",
+            "title": "Ptolemaic System",
+            "era": "150 CE - 1600 CE",
+            "rarity": "Rare",
+            "stats": {
+                "precision": 78,
+                "complexity": 85,
+                "historical_depth": 70,
+                "observational_focus": "Geometric/Stellar"
+            },
+            "special_ability": "Epicyclic Resonance: Stacking circles to simulate complex planetary loops.",
+            "description": "The Almagest's legacy of geocentric modeling that dominated the Western world for a millennium.",
+            "image_prompt": "Brass astrolabe with multiple rotating rings, gears, parchment background with ink drawings of epicycles, warm sepia tones."
+        }
+    ]
+}

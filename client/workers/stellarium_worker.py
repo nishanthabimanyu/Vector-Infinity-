@@ -55,12 +55,20 @@ class StellariumWorker(QThread):
                     self.latency_updated.emit(latency)
                     
                     # Extract & Emit relevant telemetry
+                    view_data = data.get('view', {})
+                    point = view_data.get('point', {})
+                    j2000 = point.get('j2000', [0.0, 0.0]) # [RA, Dec]
+                    azimuthal = point.get('azimuthal', [0.0, 0.0]) # [Az, Alt]
+                    
                     telemetry = {
                         'time': data.get('time', {}).get('utc', 'Unknown'),
-                        'fov': data.get('view', {}).get('fov', 0),
-                        'fps': data.get('view', {}).get('fps', 0),
-                        'az': 0.0, # Placeholder (Stellarium status doesn't always have Az/Alt directly in root)
-                        'alt': 0.0
+                        'jday': data.get('time', {}).get('jday', 2451545.0),
+                        'fov': view_data.get('fov', 0),
+                        'fps': view_data.get('fps', 0),
+                        'ra': j2000[0],
+                        'dec': j2000[1],
+                        'az': azimuthal[0],
+                        'alt': azimuthal[1]
                     }
                     self.telemetry_data.emit(telemetry)
                     

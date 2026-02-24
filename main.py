@@ -1,4 +1,18 @@
 import sys
+import os
+
+# AGGRESSIVE OPENGL FIX FOR WINDOWS
+# Force all composition to OpenGL to prevent D3D11 conflicts with pyqtgraph
+os.environ["QT_OPENGL"] = "desktop"
+os.environ["QSG_RHI_BACKEND"] = "opengl"
+os.environ["QT_RHI_BACKEND"] = "opengl"
+os.environ["QT_WIDGETS_RHI_BACKEND"] = "opengl"
+os.environ["QT_ANGLE_PLATFORM"] = "gl"
+
+# [CRITICAL] Disable WebEngine GPU to prevent context sharing crash with OrbitalDynamics
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+
+from PySide6 import QtCore
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QFontDatabase, QFont
 from client.views.logic_gate import LogicGate
@@ -26,6 +40,13 @@ import asyncio
 from client.api.vector_client import VectorClient
 
 if __name__ == "__main__":
+    # Enable desktop OpenGL (D3D11 incompatibility workaround)
+    QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseDesktopOpenGL)
+    # [FIX] Removed AA_ShareOpenGLContexts as it causes kFatalFailure on some Windows GPUs
+    # when mixing WebEngine and Pyqtgraph.
+    # QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
+    QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
+    
     app = QApplication(sys.argv)
     
     # Debugging: Catch silent crashes

@@ -59,6 +59,24 @@ class LabDashboard(QWidget):
         """)
         self.btn_orbital.clicked.connect(lambda: self.request_view_change.emit(5))
         tb_layout.addWidget(self.btn_orbital)
+
+        # Cultural Hub Link
+        self.btn_culture = QPushButton("CULTURAL HUB")
+        self.btn_culture.setCursor(Qt.PointingHandCursor)
+        self.btn_culture.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 157, 0, 0.1); 
+                border: 1px solid #ff9d00; 
+                color: #ff9d00; 
+                font-size: 10px; font-weight: bold; 
+                padding: 6px 12px; border-radius: 3px;
+                margin-left: 10px;
+            }
+            QPushButton:hover { background: #ff9d00; color: black; }
+        """)
+        # We'll assume index 7 for the new Cultural Hub view in the main stack
+        self.btn_culture.clicked.connect(lambda: self.request_view_change.emit(7))
+        tb_layout.addWidget(self.btn_culture)
         
         layout.addWidget(toolbar)
         
