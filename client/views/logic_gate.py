@@ -347,7 +347,7 @@ class LogicGate(QWidget):
         
         self.btn_connect = QPushButton("INITIALIZE CONNECTION")
         self.btn_connect.setCursor(Qt.PointingHandCursor)
-        self.btn_connect.clicked.connect(self.init_stellarium_connection)
+        self.btn_connect.clicked.connect(self.toggle_connection)
         self.btn_connect.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #007bff, stop:1 #00d4ff);
@@ -1670,20 +1670,32 @@ class LogicGate(QWidget):
             self.status_text.setStyleSheet("color: #2ecc71; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
             self.status_text.setText(f"STATUS: {message}")
             
-            # [REMOVED] Jarring auto-switches on connection
-            # self.sidebar_stack.setCurrentIndex(1) 
-            # self.sidebar_stack.setCurrentIndex(1) 
-            
-            # [REMOVED] Jarring auto-switches. Keep user in current view.
-            # self.stage_stack.setCurrentIndex(4)
-            # self.set_immersive_mode(True)
+            # Update Button to Red / Close Connection
+            self.btn_connect.setText("CLOSE CONNECTION")
+            self.btn_connect.setStyleSheet("""
+                QPushButton {
+                    background: #c0392b; 
+                    color: white; font-weight: bold; font-family: 'Rajdhani', sans-serif;
+                    font-size: 14px; padding: 12px; border: none; border-radius: 4px; letter-spacing: 1px;
+                }
+                QPushButton:hover { background: #e74c3c; }
+            """)
             
         else:
             self.status_led.setStyleSheet("color: #e74c3c; font-size: 10px; margin-right: 5px;") 
             self.status_text.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold; letter-spacing: 1px;")
             self.status_text.setText(f"STATUS: {message}")
             
-            # Revert
+            # Revert Button
+            self.btn_connect.setText("INITIALIZE CONNECTION")
+            self.btn_connect.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #007bff, stop:1 #00d4ff);
+                    color: white; font-weight: bold; font-family: 'Rajdhani', sans-serif;
+                    font-size: 14px; padding: 12px; border: none; border-radius: 4px; letter-spacing: 1px;
+                }
+                QPushButton:hover { background: #0056b3; }
+            """)
             self.sidebar_stack.setCurrentIndex(0)
             self.set_immersive_mode(False)
 
