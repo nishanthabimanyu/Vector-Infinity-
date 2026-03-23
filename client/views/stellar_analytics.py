@@ -16,7 +16,7 @@ import numpy as np
 import os
 from skyfield.api import load
 from client.ui.chat_widgets import ChatInterface
-from client.widgets.earth_3d import Earth3DWidget
+from client.widgets.time_map import TimeMapWidget
 from client.widgets.stellar_calendar import StellarCalendarWidget
 
 class ChartContainer(QFrame):
@@ -128,13 +128,20 @@ class ChartContainer(QFrame):
 
     def export_image(self):
         try:
-            # 1. Ask for filename
             filename, _ = QFileDialog.getSaveFileName(self, "Save Snapshot", "", "PNG Images (*.png)")
             if not filename: return
-            
-            # 2. Export
-            exporter = pyqtgraph.exporters.ImageExporter(self.plot_widget.plotItem)
-            exporter.export(filename)
+            # PlotWidget path
+            if hasattr(self.plot_widget, 'plotItem'):
+                exporter = pyqtgraph.exporters.ImageExporter(self.plot_widget.plotItem)
+                exporter.export(filename)
+            else:
+                # Composite widget — grab the widget's first PlotWidget child
+                child_plot = self.plot_widget.findChild(pg.PlotWidget)
+                if child_plot:
+                    exporter = pyqtgraph.exporters.ImageExporter(child_plot.plotItem)
+                    exporter.export(filename)
+                else:
+                    print("Export Image: no PlotWidget found in this container")
         except Exception as e:
             print(f"Export Image Failed: {e}")
 
@@ -1277,7 +1284,7 @@ class HilbertSpaceVisualizer(pg.PlotWidget):
         except Exception as e: print(f"CSV Export Error: {e}")
 
 class QueryWorker(QThread):
-    results_ready = Signal(list, float, float, float) # results, julian_date, lat, lon
+    results_ready = Signal(list, float, float, float, object, object) # results, jd, lat, lon, ra, dec
     error_occurred = Signal(str)
 
     def __init__(self, query_type, category):
@@ -1349,19 +1356,26 @@ class QueryWorker(QThread):
             
             # Get JD and location from status
             jd = None    # None = Stellarium not reachable
-            lat = 0.0
-            lon = 0.0
+            lat, lon = 0.0, 0.0
+            focus_ra, focus_dec = None, None
             try:
                 status_resp = session.get(f"{base_url}/api/main/status", timeout=0.5)
                 if status_resp.status_code == 200:
                     status = status_resp.json()
-                    jd = status.get('jday', None)
+                    jd = status.get('time', {}).get('jday', None)
                     loc = status.get('location', {})
                     lat = loc.get('latitude', 0.0)
                     lon = loc.get('longitude', 0.0)
+                    
+                    # Get Current View Center (Focus)
+                    view_data = status.get('view', {})
+                    point = view_data.get('point', {})
+                    j2000 = point.get('j2000', [None, None]) # [RA, Dec]
+                    if len(j2000) >= 2:
+                        focus_ra, focus_dec = j2000[0], j2000[1]
             except: pass
             
-            self.results_ready.emit(results, jd if jd is not None else 0.0, lat, lon)
+            self.results_ready.emit(results, jd if jd is not None else 0.0, lat, lon, focus_ra, focus_dec)
             
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -1599,14 +1613,14 @@ class StellarAnalytics(QWidget):
         
         # Instantiate Charts
         self.visibility = VisibilityCurve()
-        self.earth_3d = Earth3DWidget()
+        self.time_map = TimeMapWidget()
         self.hilbert = HilbertSpaceVisualizer()
         self.skypath = SkyPathAnalyzer()
         
         # Wrap in ChartContainers (Title moved to Container)
         self.cont_vis = ChartContainer(self.visibility, "VISIBILITY FORECAST", "#2ecc71")
         self.cont_sky = ChartContainer(self.skypath, "SKY PATH (POLAR)", "#9b59b6")
-        self.cont_earth_3d = ChartContainer(self.earth_3d, "EARTH ROTATION (3D)", "#4facfe")
+        self.cont_time_map = ChartContainer(self.time_map, "GLOBAL TIME & DAY/NIGHT TRACKER", "#4facfe")
         self.cont_hilbert = ChartContainer(self.hilbert, "HILBERT SPACE CONNECTIVITY", "#4facfe")
         
         # Store initial grid positions for restore: (row, col, rowspan, colspan)
@@ -1614,7 +1628,7 @@ class StellarAnalytics(QWidget):
         self.chart_positions = {
             self.cont_vis: (0, 0, 1, 1),
             self.cont_sky: (0, 1, 1, 1),
-            self.cont_earth_3d: (1, 0, 1, 1),
+            self.cont_time_map: (1, 0, 1, 1),
             self.cont_hilbert: (1, 1, 1, 1)
         }
         
@@ -1922,11 +1936,13 @@ class StellarAnalytics(QWidget):
         except: return "+0° 0' 0.0\""
 
     # RE-IMPLEMENTATION WITH WIDGETS IN COL 0
-    def update_table(self, data, jd=None, lat=0.0, lon=0.0):
+    def update_table(self, data, jd=None, lat=0.0, lon=0.0, focus_ra=None, focus_dec=None):
         self.latest_data = data 
         self.current_jd = jd
         self.current_lat = lat
         self.current_lon = lon
+        self.focus_ra = focus_ra
+        self.focus_dec = focus_dec
         self.is_updating_table = True 
         
         # PERFORMANCE: Block UI Updates
@@ -2129,13 +2145,21 @@ class StellarAnalytics(QWidget):
         # Sky Path - Feed active items
         self.skypath.update_plot(active_items)
         
-        # Update 3D Earth rotation and observer location
-        if jd and jd > 0.0:   # jd=0.0 means Stellarium was offline
-            self.earth_3d.update_time(jd)
-            # Push to calendar only when Stellarium is actually connected
+        # Update Time Map with Live Shading & Position
+        if jd:
+             self.time_map.update_plot(jd, lat, lon)
+             if getattr(self, 'focus_ra', None) is not None:
+                 self.time_map.update_sim_focus(self.focus_ra, self.focus_dec, jd)
+             
+             # Locate Moon position to update tracker overlay
+             moon_data = next((item for item in data if item.get('name') == 'Moon'), None)
+             if moon_data:
+                 self.time_map.update_moon_focus(moon_data.get('ra'), moon_data.get('dec'), jd)
+
+        # Push JD to calendar only when Stellarium is actually connected
+        if jd and jd > 0.0:
             self.stellar_calendar.update_from_jd(jd)
-        self.earth_3d.update_observer_location(lat, lon)
-            
+
         self.hilbert.update_plot(active_items)
             
 
